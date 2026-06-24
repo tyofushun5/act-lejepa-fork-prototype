@@ -1,0 +1,32 @@
+# Environments
+robosuite==1.5.1
+metaworld
+git+https://github.com/elasticdotventures/gym-pusht.git@fix/pymunk7-compatibility # for gym-pusht
+mani_skill
+
+rerun-sdk[notebook]
+jupyter
+ipykernel
+torch
+torchvision
+einops
+numpy
+matplotlib
+wandb
+python-dotenv
+pyyaml
+torchcodec
+python-box
+
+# huggingface
+transformers
+datasets==4.1.1
+accelerate
+hf-transfer
+
+# envs
+gymnasium
+mujoco==3.2.6
+imageio
+pandas
+imageio-ffmpeg

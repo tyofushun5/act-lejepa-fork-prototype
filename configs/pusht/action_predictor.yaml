@@ -1,0 +1,160 @@
+app: frozen jepa + action predictor pusht
+
+# --------------------- Training ---------------------
+training_arguments:
+  # seed
+  seed: 42
+  max_steps: 4000
+
+  # optimization
+  optim: adamw_torch
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.04
+  learning_rate: 6.0e-4
+  weight_decay: 0.1
+
+  # dataloader
+  per_device_train_batch_size: 128
+  per_device_eval_batch_size: 128
+  dataloader_num_workers: 16
+  dataloader_drop_last: true
+
+  # log training
+  logging_strategy: steps
+  logging_steps: 50
+  logging_first_step: true
+  log_on_each_node: false
+  
+  save_strategy: steps
+  save_steps: 1000 # save every n steps (and the last step)
+
+  # other
+  gradient_accumulation_steps: 1
+  full_determinism: true
+  report_to: ['wandb']
+
+normalize_keys: ['action', 'observation.state']
+
+callbacks: ['EmaUpdateCallback', 'LogAuxiliaryLossCallback', 'ActionPredictorCallback']
+
+# --------------------- Features ---------------------
+feature_config: &horizon
+  observation.image: 1
+  observation.state: 30
+  episode_index: 1
+  task_index: 1
+  action: 30
+
+
+# --------------------- Policy model ---------------------
+model: &model
+  policy_name: ActionChunkingPolicy
+  class_name: Jepa
+  horizon: *horizon
+
+  encoder: &common_params
+    hidden_size: 512
+    intermediate_size: 2048
+    num_hidden_layers: 4
+    num_attention_heads: 8
+    hidden_act: relu
+    attention_dropout: 0.1
+    horizon: *horizon
+  
+  target_encoder:
+    <<: *common_params
+    causal: false
+
+  decoder:
+    <<: *common_params
+    num_hidden_layers: 1
+    causal: false
+
+  predictor:
+    <<: *common_params
+    # narrow predictor
+    hidden_size: 128 
+    intermediate_size: 512
+    causal: false
+
+ema_start: 0.996
+ema_end: 1.0
+
+
+# --------------------- PushT settings ---------------------
+dataset: &dataset
+  repo_ids:
+    - alek98/pusht
+  revision: 'main'
+  use_videos: True
+  train_episodes_range: [0, 190]
+  test_episodes_range: [190, 206]
+
+env: &env
+  rollout_steps: 1000
+  rollout_delay: 1 # skip rollout at the beginning
+
+  num_episodes: 100
+  seed: 1000
+  
+  env_kwargs:
+    id: my-pusht-v0
+    img_size: 96
+    max_episode_steps: 300
+
+  env_names:
+    - none
+
+
+# --------------------- Action predictor config ---------------------
+action_predictor_every_n_steps: 500
+
+action_predictor:
+  app: action predictor transfer learning
+
+  training_arguments:
+    # seed
+    seed: 42
+    max_steps: 250
+
+    # optimization
+    optim: adamw_torch
+    lr_scheduler_type: cosine
+    warmup_ratio: 0.08
+    learning_rate: 6.0e-4
+    weight_decay: 0.1
+
+    # dataloader
+    per_device_train_batch_size: 128
+    per_device_eval_batch_size: 128
+    dataloader_num_workers: 16
+    dataloader_drop_last: true
+
+    # log training
+    logging_strategy: steps
+    logging_steps: 250
+    logging_first_step: true
+    log_on_each_node: false
+
+    # other
+    gradient_accumulation_steps: 1
+    full_determinism: true
+    report_to: []
+
+  normalize_keys: ['action', 'observation.state']
+
+  callbacks: ['LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
+
+  feature_config: *horizon
+
+  model:
+    <<: *model
+    class_name: ActionPredictorModel  
+    freeze_encoder: true
+
+  dataset: *dataset
+
+  env: 
+    <<: *env
+    rollout_steps: 250 # the same as action predictor logging and max steps
+  

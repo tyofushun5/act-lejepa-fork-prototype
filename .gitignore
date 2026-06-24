@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+
+# Logs, checkpoints, and experiment outputs
+logs/
+wandb/
+runs/
+outputs/
+checkpoints/
+artifacts/
+*.log
+
+# Local data artifacts
+data/
+datasets/
+*.parquet
+*.mp4
+*.zip
+*.safetensors
+
+
+.DS_Store
+.ipynb_checkpoints/
