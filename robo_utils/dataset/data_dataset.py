@@ -42,8 +42,10 @@ class DataDataset(torch.utils.data.Dataset):
         # Filter dataset by requested episodes
         self.hf_dataset = filter_dataset(self.hf_dataset, self.episode_ids, 'episode_index')
 
-        # Set format to torch
-        self.hf_dataset.set_format('torch') # set_format is faster than set_transform
+        # Keep the native format and tensorize numeric columns manually in
+        # __getitem__. datasets==4.1.1's torch formatter imports
+        # torchvision.io.VideoReader, which is not available in newer
+        # torchvision builds.
 
     def _set_feature_configs(self, feature_configs):
         # handle feature configs
@@ -66,14 +68,14 @@ class DataDataset(torch.utils.data.Dataset):
         for feature in self.feature_configs:
             ids, pad_mask = self._get_horizon_info(index, feature)
 
-            result[feature.name] = self.hf_dataset[feature.name][ids]
+            result[feature.name] = torch.as_tensor(self.hf_dataset[feature.name][ids])
 
             # Add padding mask if applicable
             if len(feature.horizon) > 1:
                 result[f'{feature.name}_is_pad'] = pad_mask
 
             # Remove T dim if single step horizon was requested
-            if len(feature.horizon) == 1 and isinstance(result[feature.name], torch.Tensor):
+            if len(feature.horizon) == 1:
                 result[feature.name].squeeze_(0)
 
         return result
@@ -84,18 +86,19 @@ class DataDataset(torch.utils.data.Dataset):
 
         # Clip to valid dataset bounds (avoid IndexError)
         min_idx, max_idx = 0, len(self.hf_dataset) - 1
-        safe_indices = np.clip(horizon_indices, min_idx, max_idx)
+        safe_indices = np.clip(horizon_indices, min_idx, max_idx).astype(int)
         
         # True where the original indices are out-of-bounds
         oob_mask = ( horizon_indices < min_idx) | (horizon_indices > max_idx)
 
         # True where the episode index does not match the current index.
-        episode_mask = current_episode_id != self.hf_dataset['episode_index'][safe_indices]
+        episode_ids = np.asarray(self.hf_dataset['episode_index'][safe_indices.tolist()])
+        episode_mask = current_episode_id != episode_ids
 
         # Create padding mask - True where data is padded.
-        pad_mask = episode_mask | torch.asarray(oob_mask)
+        pad_mask = torch.as_tensor(episode_mask | oob_mask)
 
-        return safe_indices, pad_mask
+        return safe_indices.tolist(), pad_mask
 
     @classmethod
     def from_hf(

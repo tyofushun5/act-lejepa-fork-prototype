@@ -156,6 +156,25 @@ class EmaUpdateCallback(TrainerCallback):
         wandb.log({'train/ema': self.ema_momentum}, state.global_step)
 
 
+class HardTargetUpdateCallback(TrainerCallback):
+    '''
+    Copies the context encoder weights into the target encoder after each
+    optimizer step. This disables EMA target updates while keeping the two
+    encoders synchronized throughout training.
+    '''
+    def __init__(self, trainer: Trainer, config=None):
+        super().__init__()
+        self.trainer = trainer
+
+    def on_optimizer_step(self, args, state, control, **kwargs):
+        self.trainer.model.model.copy_context_to_target_encoder()
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if not state.is_world_process_zero or 'wandb' not in args.report_to or not control.should_log:
+            return
+        wandb.log({'train/target_encoder_hard_sync': 1}, state.global_step)
+
+
 class CollectLossCallback(TrainerCallback):
 
     def __init__(self, trainer: Trainer, config=None):

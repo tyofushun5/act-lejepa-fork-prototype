@@ -1,4 +1,4 @@
-app: act-jepa mani_skill
+app: act-jepa hard-target pusht
 
 # --------------------- Training ---------------------
 training_arguments:
@@ -14,9 +14,9 @@ training_arguments:
   weight_decay: 0.1
 
   # dataloader
-  per_device_train_batch_size: 128
-  per_device_eval_batch_size: 128
-  dataloader_num_workers: 16
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
+  dataloader_num_workers: 4
   dataloader_drop_last: true
 
   # log training
@@ -24,18 +24,22 @@ training_arguments:
   logging_steps: 50
   logging_first_step: true
   log_on_each_node: false
-  
+
+  # eval_strategy: steps
+  # eval_steps: 0.25
+  # eval_delay: 1 # skip eval at the beginning
+
   save_strategy: steps
-  save_steps: 2000 # save every n steps (and the last step)
+  save_steps: 1000 # save every n steps (and the last step)
 
   # other
   gradient_accumulation_steps: 1
   full_determinism: true
   report_to: ['wandb']
 
-normalize_keys: []
+normalize_keys: ['action', 'observation.state']
 
-callbacks: ['EmaUpdateCallback', 'LogAuxiliaryLossCallback', 'AgentEvaluatorCallback', 'StatePredictorCallback']
+callbacks: ['HardTargetUpdateCallback', 'AgentEvaluatorCallback', 'LogAuxiliaryLossCallback']
 
 # --------------------- Features ---------------------
 feature_config: &horizon
@@ -60,7 +64,7 @@ model:
     hidden_act: relu
     attention_dropout: 0.1
     horizon: *horizon
-  
+
   target_encoder:
     <<: *common_params
     causal: false
@@ -73,7 +77,7 @@ model:
   predictor:
     <<: *common_params
     # narrow predictor
-    hidden_size: 128 
+    hidden_size: 128
     intermediate_size: 512
     causal: false
 
@@ -82,43 +86,30 @@ model:
     knots: 17
     num_proj: 1024
 
-ema_start: 0.996
-ema_end: 1.0
 
-
-# --------------------- ManiSkill settings ---------------------
+# --------------------- PushT settings ---------------------
 dataset:
   repo_ids:
-    - alek98/ManiSkill_PickCube-v1
-    - alek98/ManiSkill_PushCube-v1
-    - alek98/ManiSkill_StackCube-v1
-    - alek98/ManiSkill_PullCubeTool-v1
-    - alek98/ManiSkill_PegInsertionSide-v1
-
+    - alek98/pusht
   revision: 'main'
   use_videos: True
-  train_episodes_range: [0, 50]
-  test_episodes_range: [40, 50]
+  train_episodes_range: [0, 190]
+  test_episodes_range: [190, 206]
 
 env:
   rollout_steps: 1000
   rollout_delay: 1 # skip rollout at the beginning
 
-  num_episodes: 10
+  num_episodes: 100
   seed: 1000
-  
+
   env_kwargs:
-    id: ManiSkill-v3
-    img_size: 128
-    max_episode_steps: 300 # max num steps
-    control_mode: pd_joint_pos # note that these are absolute positions
+    id: my-pusht-v0
+    img_size: 96
+    max_episode_steps: 300
 
   env_names:
-    - PickCube-v1
-    - PushCube-v1
-    - StackCube-v1
-    - PullCubeTool-v1
-    - PegInsertionSide-v1
+    - none
 
 state_predictor: !inc state_predictor.yaml
 state_predictor_every_n_steps: 1000

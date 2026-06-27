@@ -77,6 +77,11 @@ model: &model
     intermediate_size: 512
     causal: false
 
+  sigreg:
+    weight: 1.0
+    knots: 17
+    num_proj: 1024
+
 ema_start: 0.996
 ema_end: 1.0
 

@@ -21,6 +21,7 @@ class ActJepaConfig(PretrainedConfig):
         target_encoder: dict = None,
         predictor: dict = None,
         decoder: dict = None,
+        sigreg: dict = None,
         horizon: dict[str, int] = {},  # e.g., {'action': 10}
         **kwargs
     ):
@@ -28,6 +29,7 @@ class ActJepaConfig(PretrainedConfig):
         self.target_encoder = PretrainedConfig(**target_encoder)
         self.predictor = PretrainedConfig(**predictor)
         self.decoder = PretrainedConfig(**decoder)
+        self.sigreg = PretrainedConfig(**(sigreg or {}))
 
         self.encoder.state_dim = state_dim
         self.target_encoder.state_dim = state_dim
@@ -161,6 +163,29 @@ class Predictor(nn.Module):
         return full_mask
     
 
+class SIGReg(torch.nn.Module):
+    def __init__(self, knots=17, num_proj=1024):
+        super().__init__()
+        self.num_proj = num_proj
+        t = torch.linspace(0, 3, knots, dtype=torch.float32)
+        dt = 3 / (knots - 1)
+        weights = torch.full((knots,), 2 * dt, dtype=torch.float32)
+        weights[[0, -1]] = dt
+        window = torch.exp(-t.square() / 2.0)
+        self.register_buffer("t", t)
+        self.register_buffer("phi", window)
+        self.register_buffer("weights", weights * window)
+
+    def forward(self, proj):
+        proj = proj.to(dtype=torch.float32)
+        A = torch.randn(proj.size(-1), self.num_proj, device=proj.device)
+        A = A.div_(A.norm(p=2, dim=0))
+        x_t = (proj @ A).unsqueeze(-1) * self.t
+        err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
+        statistic = (err @ self.weights) * proj.size(-2)
+        return statistic.mean()
+
+
 class Jepa(PreTrainedModel):
     '''
     JEPA model consists of a context encoder, target encoder, and a predictor.
@@ -181,8 +206,15 @@ class Jepa(PreTrainedModel):
         self.target_encoder.requires_grad_(False)
 
         self.predictor = Predictor(config.predictor)
+        self.sigreg_weight = getattr(config.sigreg, 'weight', 0.0)
+        self.sigreg = SIGReg(
+            knots=getattr(config.sigreg, 'knots', 17),
+            num_proj=getattr(config.sigreg, 'num_proj', 1024),
+        )
 
         self.abstract_loss = 0.
+        self.sigreg_loss = 0.
+        self.jepa_loss = 0.
 
     def forward(self, return_loss=True, **inputs):
         '''Predicts abstract representation of a sequence of states.'''
@@ -200,14 +232,21 @@ class Jepa(PreTrainedModel):
                 abstract_labels = self.target_encoder(**inputs) # (B T_target C)
                 output['abstract_labels'] = abstract_labels
 
-            loss = self.loss_function(**(inputs | output))
-            self.abstract_loss = loss
+            abstract_loss = self.abstract_loss_function(**(inputs | output))
+            sigreg_loss = self.sigreg_loss_function(**(inputs | output))
+            loss = self.loss_function(abstract_loss, sigreg_loss)
+
+            self.abstract_loss = abstract_loss
+            self.sigreg_loss = sigreg_loss
+            self.jepa_loss = loss
+            output['abstract_loss'] = abstract_loss
+            output['sigreg_loss'] = sigreg_loss
+            output['jepa_loss'] = loss
             output['loss'] = loss
-            output['abstract_loss'] = loss
         
         return ModelOutput(output)
 
-    def loss_function(self, abstract_pred, abstract_labels, **kwargs):
+    def abstract_loss_function(self, abstract_pred, abstract_labels, **kwargs):
         is_pad = kwargs['observation.state_is_pad']
         assert abstract_pred.shape == abstract_labels.shape
         assert abstract_pred.shape[:-1] == is_pad.shape
@@ -215,6 +254,18 @@ class Jepa(PreTrainedModel):
         abstract_pred = abstract_pred[~is_pad]
         abstract_labels = abstract_labels[~is_pad]
         return F.l1_loss(abstract_pred, abstract_labels)
+
+    def sigreg_loss_function(self, abstract_pred, **kwargs):
+        if self.sigreg_weight <= 0:
+            return abstract_pred.new_zeros(())
+
+        is_pad = kwargs['observation.state_is_pad']
+        assert abstract_pred.shape[:-1] == is_pad.shape
+        abstract_pred = abstract_pred[~is_pad]
+        return self.sigreg(abstract_pred)
+
+    def loss_function(self, abstract_loss, sigreg_loss):
+        return abstract_loss + self.sigreg_weight * sigreg_loss
     
     @torch.no_grad()
     def update_target_encoder(self, m: float):
@@ -228,6 +279,18 @@ class Jepa(PreTrainedModel):
         for (name_c, param_c), (name_t, param_t) in zip(self.context_encoder.named_parameters(), self.target_encoder.named_parameters()):
             assert name_c == name_t, f'params names must be equal: {name_c=}, {name_t=}'
             param_t.data.mul_(m).add_((1.0 - m) * param_c.data)
+
+    @torch.no_grad()
+    def copy_context_to_target_encoder(self):
+        '''
+        Hard-sync the target encoder with the context encoder.
+
+        Unlike EMA, this copies the full state_dict, including non-parameter
+        buffers such as normalization running statistics.
+        '''
+        self.target_encoder.load_state_dict(self.context_encoder.state_dict())
+        self.target_encoder.eval()
+        self.target_encoder.requires_grad_(False)
 
 
 class ActJepaModel(PreTrainedModel):
@@ -245,6 +308,8 @@ class ActJepaModel(PreTrainedModel):
 
         self.abstract_loss = 0.
         self.reconstruction_loss = 0.
+        self.sigreg_loss = 0.
+        self.jepa_loss = 0.
     
     def forward(self, return_loss=True, **inputs):
         output = self.jepa.forward(return_loss, **inputs)
@@ -261,8 +326,10 @@ class ActJepaModel(PreTrainedModel):
             self.reconstruction_loss = reconstruction_loss
             output['reconstruction_loss'] = reconstruction_loss
             self.abstract_loss = output.abstract_loss
+            self.sigreg_loss = output.sigreg_loss
+            self.jepa_loss = output.jepa_loss
 
-            loss = self.loss_function(self.reconstruction_loss, self.abstract_loss)
+            loss = self.loss_function(self.reconstruction_loss, self.jepa_loss)
             output['loss'] = loss
 
         return output
@@ -276,13 +343,17 @@ class ActJepaModel(PreTrainedModel):
         labels = labels[~action_is_pad]
         return F.l1_loss(action_pred, labels)
     
-    def loss_function(self, reconstruction_loss, abstract_loss):
-        '''The total loss is calculated as action reconstruction loss + abstract loss.'''
-        return reconstruction_loss + abstract_loss
+    def loss_function(self, reconstruction_loss, jepa_loss):
+        '''The total loss is calculated as action reconstruction loss + JEPA loss.'''
+        return reconstruction_loss + jepa_loss
     
     @torch.no_grad()
     def update_target_encoder(self, m: float):
         return self.jepa.update_target_encoder(m)
+
+    @torch.no_grad()
+    def copy_context_to_target_encoder(self):
+        return self.jepa.copy_context_to_target_encoder()
     
     @property
     def encoder(self):
