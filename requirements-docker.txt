@@ -23,7 +23,6 @@ pandas
 python-box
 python-dotenv
 pyyaml
+rerun-sdk
 transformers==5.12.1
 wandb==0.28.0
-
-# The training path does not require notebook or rerun dependencies.

@@ -63,4 +63,5 @@ COPY . .
 
 RUN mkdir -p /cache/huggingface logs wandb .cache/wandb
 
-CMD ["python", "-m", "scripts.train", "--config_path", "configs/mani_skill/act-jepa.yaml"]
+# Keep bare `docker run act-jepa:latest` from starting a training job implicitly.
+CMD ["bash"]
