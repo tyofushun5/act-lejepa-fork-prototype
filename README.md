@@ -44,15 +44,9 @@ For example, to train the ACT-JEPA policy on Push-T use this:
 python -m scripts.train --config_path configs/pusht/act-jepa.yaml
 ```
 
-To train the Push-T ACT-JEPA variant that hard-syncs the target encoder from
-the context encoder instead of using EMA updates, use this:
-
-```bash
-python -m scripts.train --config_path configs/pusht/act-jepa-hard-target.yaml
-```
-
-ACT-JEPA configs include an optional `model.sigreg` block that adds SIGReg to
-the JEPA loss. Set `model.sigreg.weight` to tune or disable it.
+ACT-JEPA trains the target encoder directly with gradient descent. Configs
+include an optional `model.sigreg` block that adds SIGReg to the JEPA loss. Set
+`model.sigreg.weight` to tune or disable it.
 
 Available environments are `pusht`, `metaworld`, and `mani_skill`. Available model configs include `act`, `act-jepa`, `ar_transformer`, `state_predictor`, and `action_predictor`.
 

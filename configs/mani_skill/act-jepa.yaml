@@ -14,8 +14,8 @@ training_arguments:
   weight_decay: 0.1
 
   # dataloader
-  per_device_train_batch_size: 128
-  per_device_eval_batch_size: 128
+  per_device_train_batch_size: 32
+  per_device_eval_batch_size: 32
   dataloader_num_workers: 16
   dataloader_drop_last: true
 
@@ -35,7 +35,7 @@ training_arguments:
 
 normalize_keys: []
 
-callbacks: ['EmaUpdateCallback', 'LogAuxiliaryLossCallback', 'AgentEvaluatorCallback', 'StatePredictorCallback']
+callbacks: ['LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
 
 # --------------------- Features ---------------------
 feature_config: &horizon
@@ -78,13 +78,9 @@ model:
     causal: false
 
   sigreg:
-    weight: 1.0
+    weight: 0.09
     knots: 17
     num_proj: 1024
-
-ema_start: 0.996
-ema_end: 1.0
-
 
 # --------------------- ManiSkill settings ---------------------
 dataset:

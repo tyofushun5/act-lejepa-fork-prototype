@@ -41,8 +41,8 @@ class AgentEvaluatorCallback(TrainerCallback):
 
         # Log to wandb        
         if 'wandb' in args.report_to:
-            wandb_video = {'video': self.get_wandb_video(dataset)}
-            wandb.log((info | wandb_video), step=state.global_step)
+            wandb_videos = self.get_wandb_videos(dataset)
+            wandb.log((info | wandb_videos), step=state.global_step)
         
         # self.save_dataset_to_disk(dataset)
         self.info = info
@@ -52,14 +52,30 @@ class AgentEvaluatorCallback(TrainerCallback):
         dataset_path = f'logs/wandb/rollout_dataset_{self.trainer.state.global_step}'
         save_dataset_pipeline(dataset, dataset_path, fps=30)
 
-    def get_wandb_video(self, dataset):
+    def get_wandb_videos(self, dataset):
+        '''Create wandb videos for each evaluated environment.'''
+        env_datasets = getattr(self.evaluator, 'last_env_datasets', None)
+        if not env_datasets:
+            video = self.get_wandb_video(dataset, 'rollout')
+            return {'video': video} if video else {}
+
+        videos = {}
+        for env_name, env_dataset in env_datasets.items():
+            video = self.get_wandb_video(env_dataset, env_name)
+            if video is not None:
+                videos[f'Rollout videos/{env_name}'] = video
+        return videos
+
+    def get_wandb_video(self, dataset, name):
         '''Create and return a wandb video for logging.'''
         img_col_name = next((n for n, t in dataset.features.items()
                             if isinstance(t, datasets.features.Image)), None)
         
         if img_col_name:
             extension = 'mp4'
-            video_path = save_episode_video('logs/wandb', dataset, img_col_name, extension=extension)
+            safe_name = str(name).replace('/', '_')
+            video_dir = Path('logs/wandb') / f'step_{self.trainer.state.global_step}' / safe_name
+            video_path = save_episode_video(video_dir, dataset, img_col_name, extension=extension)
             ep_video = wandb.Video(video_path, format=extension)
             return ep_video
     

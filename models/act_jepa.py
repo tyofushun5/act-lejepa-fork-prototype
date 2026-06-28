@@ -70,9 +70,7 @@ class TargetEncoder(ActEncoder):
         T = config.horizon['observation.state']
         self.state_pos_emb = get_1d_sincos_pos_emb(T, config.hidden_size).to(self.device) # (T, C)
 
-    @torch.no_grad()
     def forward(self, **inputs: dict):
-        assert self.training == False
         task_token = self.task_emb(inputs['task_index']) # (B, C)
         state_tokens = self.state_emb(inputs['observation.state']) # (B, T, C)
         state_tokens = state_tokens + self.state_pos_emb.to(self.device)
@@ -176,13 +174,59 @@ class SIGReg(torch.nn.Module):
         self.register_buffer("phi", window)
         self.register_buffer("weights", weights * window)
 
-    def forward(self, proj):
+    def forward(self, proj, is_pad=None, batch_first=False):
+        """
+        Compute SIGReg over batch distributions at each time step.
+
+        Args:
+            proj: Latents shaped either (T, B, D), (B, T, D) when
+                batch_first=True, or a single pooled set (N, D).
+            is_pad: Optional bool mask for padded sequence elements. For
+                batch_first=True this must be shaped (B, T).
+            batch_first: Whether a 3D proj tensor is shaped (B, T, D).
+        """
         proj = proj.to(dtype=torch.float32)
+        if proj.ndim == 2:
+            if is_pad is not None:
+                raise ValueError("is_pad is only supported for 3D SIGReg inputs")
+            proj = proj.unsqueeze(0)
+            valid_mask = torch.ones(proj.shape[:2], dtype=torch.bool, device=proj.device)
+        elif proj.ndim == 3:
+            if batch_first:
+                proj = proj.transpose(0, 1)
+
+            if is_pad is None:
+                valid_mask = torch.ones(proj.shape[:2], dtype=torch.bool, device=proj.device)
+            else:
+                is_pad = is_pad.to(device=proj.device, dtype=torch.bool)
+                expected_shape = (proj.size(1), proj.size(0)) if batch_first else proj.shape[:2]
+                if tuple(is_pad.shape) == tuple(expected_shape):
+                    valid_mask = ~is_pad.transpose(0, 1) if batch_first else ~is_pad
+                elif not batch_first and tuple(is_pad.shape) == (proj.size(1), proj.size(0)):
+                    valid_mask = ~is_pad.transpose(0, 1)
+                else:
+                    raise ValueError(
+                        f"is_pad shape {tuple(is_pad.shape)} is incompatible with "
+                        f"proj shape {tuple(proj.shape)} and {batch_first=}"
+                    )
+        else:
+            raise ValueError(f"SIGReg expects a 2D or 3D tensor, got shape {tuple(proj.shape)}")
+
         A = torch.randn(proj.size(-1), self.num_proj, device=proj.device)
-        A = A.div_(A.norm(p=2, dim=0))
+        A = A.div_(A.norm(p=2, dim=0).clamp_min(1e-12))
         x_t = (proj @ A).unsqueeze(-1) * self.t
-        err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
-        statistic = (err @ self.weights) * proj.size(-2)
+
+        valid = valid_mask.to(dtype=proj.dtype).unsqueeze(-1).unsqueeze(-1)
+        counts = valid_mask.sum(dim=1)
+        counts_safe = counts.to(dtype=proj.dtype).clamp_min(1).view(-1, 1, 1)
+        cos_mean = (x_t.cos() * valid).sum(dim=1) / counts_safe
+        sin_mean = (x_t.sin() * valid).sum(dim=1) / counts_safe
+
+        err = (cos_mean - self.phi).square() + sin_mean.square()
+        statistic = (err @ self.weights) * counts.to(dtype=proj.dtype).unsqueeze(-1)
+        statistic = statistic[counts > 0]
+        if statistic.numel() == 0:
+            return proj.new_zeros(())
         return statistic.mean()
 
 
@@ -190,8 +234,8 @@ class Jepa(PreTrainedModel):
     '''
     JEPA model consists of a context encoder, target encoder, and a predictor.
 
-    Target encoder is a copy of a context encoder - weights are identical at initialization.
-    Target encoder is always in eval mode and is updated through EMA not, gradient descent.
+    Target encoder is initialized from the context encoder and then trained
+    directly with gradient descent.
     '''
     config_class = ActJepaConfig
     main_input_name = 'observation.state'
@@ -202,8 +246,6 @@ class Jepa(PreTrainedModel):
 
         self.target_encoder = TargetEncoder(config.target_encoder)
         self.target_encoder.load_state_dict(self.context_encoder.state_dict())
-        self.target_encoder.eval()
-        self.target_encoder.requires_grad_(False)
 
         self.predictor = Predictor(config.predictor)
         self.sigreg_weight = getattr(config.sigreg, 'weight', 0.0)
@@ -227,10 +269,8 @@ class Jepa(PreTrainedModel):
         # calculate loss
         labels = inputs.get('labels')
         if labels is not None:
-            self.target_encoder.eval() # Put target encoder in eval
-            with torch.no_grad():
-                abstract_labels = self.target_encoder(**inputs) # (B T_target C)
-                output['abstract_labels'] = abstract_labels
+            abstract_labels = self.target_encoder(**inputs) # (B T_target C)
+            output['abstract_labels'] = abstract_labels
 
             abstract_loss = self.abstract_loss_function(**(inputs | output))
             sigreg_loss = self.sigreg_loss_function(**(inputs | output))
@@ -255,14 +295,13 @@ class Jepa(PreTrainedModel):
         abstract_labels = abstract_labels[~is_pad]
         return F.l1_loss(abstract_pred, abstract_labels)
 
-    def sigreg_loss_function(self, abstract_pred, **kwargs):
+    def sigreg_loss_function(self, abstract_labels, **kwargs):
         if self.sigreg_weight <= 0:
-            return abstract_pred.new_zeros(())
+            return abstract_labels.new_zeros(())
 
         is_pad = kwargs['observation.state_is_pad']
-        assert abstract_pred.shape[:-1] == is_pad.shape
-        abstract_pred = abstract_pred[~is_pad]
-        return self.sigreg(abstract_pred)
+        assert abstract_labels.shape[:-1] == is_pad.shape
+        return self.sigreg(abstract_labels, is_pad=is_pad, batch_first=True)
 
     def loss_function(self, abstract_loss, sigreg_loss):
         return abstract_loss + self.sigreg_weight * sigreg_loss
@@ -270,8 +309,8 @@ class Jepa(PreTrainedModel):
     @torch.no_grad()
     def update_target_encoder(self, m: float):
         '''
-        Update the target encoder using EMA (not gradient descent).
-        The target encoder slowly follows the context encoder.
+        Legacy EMA update for older configs. Current training configs update the
+        target encoder through normal gradient descent and do not call this.
         '''
         assert 0 <= m <= 1, f'EMA momentum is not in the valid range [0, 1] {m=}'
         # NOTE: as m approaches 1.0 (later stage of training), the target encoder 
@@ -283,14 +322,12 @@ class Jepa(PreTrainedModel):
     @torch.no_grad()
     def copy_context_to_target_encoder(self):
         '''
-        Hard-sync the target encoder with the context encoder.
+        Legacy hard-sync helper for older configs.
 
         Unlike EMA, this copies the full state_dict, including non-parameter
         buffers such as normalization running statistics.
         '''
         self.target_encoder.load_state_dict(self.context_encoder.state_dict())
-        self.target_encoder.eval()
-        self.target_encoder.requires_grad_(False)
 
 
 class ActJepaModel(PreTrainedModel):

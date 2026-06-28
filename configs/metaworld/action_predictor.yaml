@@ -35,7 +35,7 @@ training_arguments:
 
 normalize_keys: []
 
-callbacks: ['EmaUpdateCallback', 'LogAuxiliaryLossCallback', 'ActionPredictorCallback']
+callbacks: ['LogAuxiliaryLossCallback', 'ActionPredictorCallback']
 
 # --------------------- Features ---------------------
 feature_config: &horizon
@@ -78,13 +78,9 @@ model: &model
     causal: false
 
   sigreg:
-    weight: 1.0
+    weight: 0.09
     knots: 17
     num_proj: 1024
-
-ema_start: 0.996
-ema_end: 1.0
-
 
 # --------------------- Metaworld settings ---------------------
 dataset: &dataset

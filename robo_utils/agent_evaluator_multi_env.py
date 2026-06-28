@@ -13,6 +13,7 @@ class AgentEvaluatorMultiEnv:
         self.config = config
         self.env_names = config.env.env_names
         self.policy = policy
+        self.last_env_datasets = {}
 
     def __call__(self):
         '''
@@ -22,6 +23,7 @@ class AgentEvaluatorMultiEnv:
         '''
         all_datasets = []
         all_infos = {}
+        self.last_env_datasets = {}
         add_key_prefix = lambda d, prefix: {f'{prefix}/{k}': v for k, v in d.items()}
 
         pbar = tqdm(self.env_names, desc="Evaluating environments")
@@ -29,6 +31,7 @@ class AgentEvaluatorMultiEnv:
             pbar.set_description(f"Evaluating: {env_name}")
             dataset, info = self._evaluate_env(env_name)
             all_datasets.append(dataset)
+            self.last_env_datasets[env_name] = dataset
             all_infos |= add_key_prefix(info, f'Rollout - per environment/{env_name}')
         
         # Aggregate results of multiple envs

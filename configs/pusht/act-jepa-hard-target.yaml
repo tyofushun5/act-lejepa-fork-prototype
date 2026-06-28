@@ -39,7 +39,7 @@ training_arguments:
 
 normalize_keys: ['action', 'observation.state']
 
-callbacks: ['HardTargetUpdateCallback', 'AgentEvaluatorCallback', 'LogAuxiliaryLossCallback']
+callbacks: ['AgentEvaluatorCallback', 'LogAuxiliaryLossCallback']
 
 # --------------------- Features ---------------------
 feature_config: &horizon
@@ -82,7 +82,7 @@ model:
     causal: false
 
   sigreg:
-    weight: 1.0
+    weight: 0.09
     knots: 17
     num_proj: 1024
 
