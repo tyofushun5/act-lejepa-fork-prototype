@@ -35,7 +35,7 @@ training_arguments:
 
 normalize_keys: []
 
-callbacks: ['LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
+callbacks: ['EmaUpdateCallback', 'LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
 
 # --------------------- Features ---------------------
 feature_config: &horizon
@@ -50,6 +50,7 @@ feature_config: &horizon
 model:
   policy_name: ActionChunkingPolicy
   class_name: ActJepaModel
+  target_update: ema
   horizon: *horizon
 
   encoder: &common_params
@@ -78,9 +79,12 @@ model:
     causal: false
 
   sigreg:
-    weight: 0.09
+    weight: 0.0
     knots: 17
     num_proj: 1024
+
+ema_start: 0.996
+ema_end: 1.0
 
 # --------------------- Metaworld settings ---------------------
 dataset:

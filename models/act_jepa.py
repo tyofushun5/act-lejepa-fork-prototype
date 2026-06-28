@@ -22,6 +22,7 @@ class ActJepaConfig(PretrainedConfig):
         predictor: dict = None,
         decoder: dict = None,
         sigreg: dict = None,
+        target_update: str = 'grad',
         horizon: dict[str, int] = {},  # e.g., {'action': 10}
         **kwargs
     ):
@@ -37,6 +38,7 @@ class ActJepaConfig(PretrainedConfig):
         self.decoder.action_dim = action_dim
         self.action_dim = action_dim
         self.state_dim = state_dim
+        self.target_update = target_update
         self.horizon = horizon
         super().__init__(**kwargs)
 
@@ -234,8 +236,8 @@ class Jepa(PreTrainedModel):
     '''
     JEPA model consists of a context encoder, target encoder, and a predictor.
 
-    Target encoder is initialized from the context encoder and then trained
-    directly with gradient descent.
+    Target encoder update behavior is selected by config.target_update:
+    "ema" for the original ACT-JEPA target and "grad" for ACT-LEJEPA.
     '''
     config_class = ActJepaConfig
     main_input_name = 'observation.state'
@@ -246,6 +248,12 @@ class Jepa(PreTrainedModel):
 
         self.target_encoder = TargetEncoder(config.target_encoder)
         self.target_encoder.load_state_dict(self.context_encoder.state_dict())
+        self.target_update = getattr(config, 'target_update', 'grad')
+        if self.target_update not in {'ema', 'grad'}:
+            raise ValueError(f"Unsupported target_update: {self.target_update}")
+        if self.target_update == 'ema':
+            self.target_encoder.eval()
+            self.target_encoder.requires_grad_(False)
 
         self.predictor = Predictor(config.predictor)
         self.sigreg_weight = getattr(config.sigreg, 'weight', 0.0)
@@ -269,7 +277,7 @@ class Jepa(PreTrainedModel):
         # calculate loss
         labels = inputs.get('labels')
         if labels is not None:
-            abstract_labels = self.target_encoder(**inputs) # (B T_target C)
+            abstract_labels = self.encode_target(**inputs) # (B T_target C)
             output['abstract_labels'] = abstract_labels
 
             abstract_loss = self.abstract_loss_function(**(inputs | output))
@@ -285,6 +293,14 @@ class Jepa(PreTrainedModel):
             output['loss'] = loss
         
         return ModelOutput(output)
+
+    def encode_target(self, **inputs):
+        if self.target_update == 'grad':
+            return self.target_encoder(**inputs)
+
+        self.target_encoder.eval()
+        with torch.no_grad():
+            return self.target_encoder(**inputs)
 
     def abstract_loss_function(self, abstract_pred, abstract_labels, **kwargs):
         is_pad = kwargs['observation.state_is_pad']
@@ -309,8 +325,7 @@ class Jepa(PreTrainedModel):
     @torch.no_grad()
     def update_target_encoder(self, m: float):
         '''
-        Legacy EMA update for older configs. Current training configs update the
-        target encoder through normal gradient descent and do not call this.
+        EMA update used by baseline ACT-JEPA configs.
         '''
         assert 0 <= m <= 1, f'EMA momentum is not in the valid range [0, 1] {m=}'
         # NOTE: as m approaches 1.0 (later stage of training), the target encoder 
@@ -322,12 +337,15 @@ class Jepa(PreTrainedModel):
     @torch.no_grad()
     def copy_context_to_target_encoder(self):
         '''
-        Legacy hard-sync helper for older configs.
+        Hard-sync helper kept for backward-compatible checkpoints/scripts.
 
         Unlike EMA, this copies the full state_dict, including non-parameter
         buffers such as normalization running statistics.
         '''
         self.target_encoder.load_state_dict(self.context_encoder.state_dict())
+        if self.target_update == 'ema':
+            self.target_encoder.eval()
+            self.target_encoder.requires_grad_(False)
 
 
 class ActJepaModel(PreTrainedModel):

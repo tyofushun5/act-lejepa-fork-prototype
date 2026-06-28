@@ -1,4 +1,4 @@
-app: act-jepa mani_skill
+app: act-lejepa mani_skill
 
 # --------------------- Training ---------------------
 training_arguments:
@@ -35,7 +35,7 @@ training_arguments:
 
 normalize_keys: []
 
-callbacks: ['EmaUpdateCallback', 'LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
+callbacks: ['LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
 
 # --------------------- Features ---------------------
 feature_config: &horizon
@@ -50,7 +50,7 @@ feature_config: &horizon
 model:
   policy_name: ActionChunkingPolicy
   class_name: ActJepaModel
-  target_update: ema
+  target_update: grad
   horizon: *horizon
 
   encoder: &common_params
@@ -79,12 +79,9 @@ model:
     causal: false
 
   sigreg:
-    weight: 0.0
+    weight: 0.09
     knots: 17
     num_proj: 1024
-
-ema_start: 0.996
-ema_end: 1.0
 
 # --------------------- ManiSkill settings ---------------------
 dataset:

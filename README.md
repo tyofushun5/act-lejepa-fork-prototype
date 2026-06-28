@@ -10,7 +10,9 @@ ACT-JEPA is an architecture designed to improve action prediction and world mode
 
 For a compact walkthrough of the ACT-JEPA architecture and tensor flow, start with [`act_jepa_illustrated.ipynb`](act_jepa_illustrated.ipynb).
 
-The core ACT-JEPA implementation is in [`models/act_jepa.py`](models/act_jepa.py#L233), and ACT-JEPA configs are in `configs/{environment}/act-jepa.yaml`.
+The core ACT-JEPA/ACT-LEJEPA implementation is in [`models/act_jepa.py`](models/act_jepa.py#L233).
+Baseline ACT-JEPA configs are in `configs/{environment}/act-jepa.yaml`, and
+ACT-LEJEPA comparison configs are in `configs/{environment}/act-lejepa.yaml`.
 
 ## Repository Structure
 
@@ -38,17 +40,27 @@ Use `scripts.train` with any config in `configs/{environment}/{model}.yaml`:
 python -m scripts.train --config_path configs/<environment>/<model>.yaml
 ```
 
-For example, to train the ACT-JEPA policy on Push-T use this:
+For example, to train the baseline ACT-JEPA policy on Push-T use this:
 
 ```bash
 python -m scripts.train --config_path configs/pusht/act-jepa.yaml
 ```
 
-ACT-JEPA trains the target encoder directly with gradient descent. Configs
-include an optional `model.sigreg` block that adds SIGReg to the JEPA loss. Set
-`model.sigreg.weight` to tune or disable it.
+To train the ACT-LEJEPA comparison variant on Push-T use this:
 
-Available environments are `pusht`, `metaworld`, and `mani_skill`. Available model configs include `act`, `act-jepa`, `ar_transformer`, `state_predictor`, and `action_predictor`.
+```bash
+python -m scripts.train --config_path configs/pusht/act-lejepa.yaml
+```
+
+`act-jepa.yaml` keeps the original ACT-JEPA target encoder behavior:
+`model.target_update: ema`, no gradient through the target encoder, and
+`EmaUpdateCallback`. `act-lejepa.yaml` uses `model.target_update: grad`, trains the
+target encoder directly, and enables SIGReg on target latents. Set
+`model.sigreg.weight` to tune or disable SIGReg.
+
+Available environments are `pusht`, `metaworld`, and `mani_skill`. Available
+model configs include `act`, `act-jepa`, `act-lejepa`, `ar_transformer`,
+`state_predictor`, and `action_predictor`.
 
 ## Probe Training
 

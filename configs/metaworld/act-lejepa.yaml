@@ -1,4 +1,4 @@
-app: act-jepa mani_skill
+app: act-lejepa metaworld
 
 # --------------------- Training ---------------------
 training_arguments:
@@ -26,7 +26,7 @@ training_arguments:
   log_on_each_node: false
   
   save_strategy: steps
-  save_steps: 2000 # save every n steps (and the last step)
+  save_steps: 1000 # save every n steps (and the last step)
 
   # other
   gradient_accumulation_steps: 1
@@ -35,7 +35,7 @@ training_arguments:
 
 normalize_keys: []
 
-callbacks: ['EmaUpdateCallback', 'LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
+callbacks: ['LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
 
 # --------------------- Features ---------------------
 feature_config: &horizon
@@ -50,7 +50,7 @@ feature_config: &horizon
 model:
   policy_name: ActionChunkingPolicy
   class_name: ActJepaModel
-  target_update: ema
+  target_update: grad
   horizon: *horizon
 
   encoder: &common_params
@@ -79,46 +79,63 @@ model:
     causal: false
 
   sigreg:
-    weight: 0.0
+    weight: 0.09
     knots: 17
     num_proj: 1024
 
-ema_start: 0.996
-ema_end: 1.0
-
-# --------------------- ManiSkill settings ---------------------
+# --------------------- Metaworld settings ---------------------
 dataset:
   repo_ids:
-    - alek98/ManiSkill_PickCube-v1
-    - alek98/ManiSkill_PushCube-v1
-    - alek98/ManiSkill_StackCube-v1
-    - alek98/ManiSkill_PullCubeTool-v1
-    - alek98/ManiSkill_PegInsertionSide-v1
+    - alek98/metaworld_button-press-topdown-v3
+    - alek98/metaworld_button-press-topdown-wall-v3
+    - alek98/metaworld_button-press-v3
+    - alek98/metaworld_button-press-wall-v3
+    - alek98/metaworld_coffee-button-v3
+    - alek98/metaworld_coffee-pull-v3
+    - alek98/metaworld_coffee-push-v3
+    - alek98/metaworld_drawer-open-v3
+    - alek98/metaworld_faucet-close-v3
+    - alek98/metaworld_faucet-open-v3
+    - alek98/metaworld_disassemble-v3
+    - alek98/metaworld_door-close-v3
+    - alek98/metaworld_door-open-v3
+    - alek98/metaworld_window-close-v3
+    - alek98/metaworld_window-open-v3
 
   revision: 'main'
   use_videos: True
-  train_episodes_range: [0, 50]
+  train_episodes_range: [0, 40]
   test_episodes_range: [40, 50]
 
 env:
   rollout_steps: 1000
   rollout_delay: 1 # skip rollout at the beginning
 
-  num_episodes: 10
+  num_episodes: 20
   seed: 1000
   
   env_kwargs:
-    id: ManiSkill-v3
+    id: Metaworld-v3
     img_size: 128
-    max_episode_steps: 300 # max num steps
-    control_mode: pd_joint_pos # note that these are absolute positions
+    max_episode_steps: 200 # max num steps
+    is_random_hand_pos: false # turn off to match old dataset
 
   env_names:
-    - PickCube-v1
-    - PushCube-v1
-    - StackCube-v1
-    - PullCubeTool-v1
-    - PegInsertionSide-v1
+    - button-press-topdown-v3
+    - button-press-topdown-wall-v3
+    - button-press-v3
+    - button-press-wall-v3
+    - coffee-button-v3
+    - coffee-pull-v3
+    - coffee-push-v3
+    - drawer-open-v3
+    - faucet-close-v3
+    - faucet-open-v3
+    - disassemble-v3
+    - door-close-v3
+    - door-open-v3
+    - window-close-v3
+    - window-open-v3
 
 state_predictor: !inc state_predictor.yaml
 state_predictor_every_n_steps: 1000
