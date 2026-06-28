@@ -32,6 +32,33 @@ conda activate act-jepa
 pip install -r requirements.txt
 ```
 
+## Docker
+
+The Docker image is configured for offline experiment runs. W&B is installed,
+but `WANDB_MODE=offline` is set by default, so logs and videos are written under
+the local `wandb/` directory instead of being uploaded.
+
+Build the image:
+
+```bash
+docker build -t act-jepa .
+```
+
+Run ManiSkill with local logs, W&B files, and Hugging Face cache mounted:
+
+```bash
+docker run --rm --gpus all -it \
+  -v "$PWD/logs:/workspace/act-jepa/logs" \
+  -v "$PWD/wandb:/workspace/act-jepa/wandb" \
+  -v "${HF_HOME:-$HOME/.cache/huggingface}:/cache/huggingface" \
+  act-jepa \
+  python -m scripts.train --config_path configs/mani_skill/act-jepa.yaml
+```
+
+The image also defaults Hugging Face to offline mode. If the cache is not
+already populated, run once with `HF_HUB_OFFLINE=0`, `TRANSFORMERS_OFFLINE=0`,
+and `HF_DATASETS_OFFLINE=0`, or mount a pre-populated cache.
+
 ## Training
 
 Use `scripts.train` with any config in `configs/{environment}/{model}.yaml`:

@@ -1,0 +1,29 @@
+# Docker runtime dependencies for ACT-JEPA experiments.
+# PyTorch, TorchVision, and TorchCodec are installed in the Dockerfile from the
+# CUDA wheel index so their CUDA variants stay consistent.
+
+# Environments
+robosuite==1.5.1
+metaworld==3.0.0
+mani_skill==3.0.1
+git+https://github.com/elasticdotventures/gym-pusht.git@fix/pymunk7-compatibility
+
+# Training/runtime
+accelerate==1.14.0
+datasets==4.1.1
+einops
+hf-transfer
+imageio
+imageio-ffmpeg
+matplotlib
+mujoco==3.2.6
+numpy
+opencv-python-headless
+pandas
+python-box
+python-dotenv
+pyyaml
+transformers==5.12.1
+wandb==0.28.0
+
+# The training path does not require notebook or rerun dependencies.

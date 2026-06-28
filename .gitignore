@@ -22,11 +22,14 @@ artifacts/
 # Local data artifacts
 data/
 datasets/
+samples/
 *.parquet
 *.mp4
 *.zip
 *.safetensors
 
+# Local editor settings
+.idea/
 
 .DS_Store
 .ipynb_checkpoints/
