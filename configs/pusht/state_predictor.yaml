@@ -73,5 +73,5 @@ dataset:
     - alek98/pusht
   revision: 'main'
   use_videos: True
-  train_episodes_range: [0, 200]
-  test_episodes_range: [30, 40]
+  train_episodes_range: [0, 190]
+  test_episodes_range: [190, 206]

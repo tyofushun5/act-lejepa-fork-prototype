@@ -82,6 +82,13 @@ model: &model
     knots: 17
     num_proj: 1024
 
+  loss_weights:
+    action: 1.0
+    jepa: 1.0
+    abstract: 1.0
+    target_sigreg: 0.09
+    context_sigreg: 0.09
+
 # --------------------- ManiSkill settings ---------------------
 dataset: &dataset
   repo_ids:
@@ -93,7 +100,7 @@ dataset: &dataset
 
   revision: 'main'
   use_videos: True
-  train_episodes_range: [0, 50]
+  train_episodes_range: [0, 40]
   test_episodes_range: [40, 50]
 
 env: &env

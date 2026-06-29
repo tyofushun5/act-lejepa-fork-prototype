@@ -83,6 +83,13 @@ model:
     knots: 17
     num_proj: 1024
 
+  loss_weights:
+    action: 1.0
+    jepa: 1.0
+    abstract: 1.0
+    target_sigreg: 0.0
+    context_sigreg: 0.0
+
 ema_start: 0.996
 ema_end: 1.0
 
@@ -97,7 +104,7 @@ dataset:
 
   revision: 'main'
   use_videos: True
-  train_episodes_range: [0, 50]
+  train_episodes_range: [0, 40]
   test_episodes_range: [40, 50]
 
 env:
