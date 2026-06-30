@@ -79,10 +79,11 @@ To train the ACT-LEJEPA comparison variant on Push-T use this:
 python -m scripts.train --config_path configs/pusht/act-lejepa.yaml
 ```
 
-`act-jepa.yaml` keeps the original ACT-JEPA target encoder behavior:
-`model.target_update: ema`, no gradient through the target encoder, and
-`EmaUpdateCallback`. `act-lejepa.yaml` uses `model.target_update: grad`, trains the
-target encoder directly, and enables SIGReg on both target and context latents.
+`act-jepa.yaml` uses `ActJepaModel` and keeps the original ACT-JEPA target
+encoder behavior from the 2026-06-24 baseline: no gradient through the target
+encoder, with `EmaUpdateCallback` updating it by EMA. `act-lejepa.yaml` uses
+`ActLejepaModel` with `model.target_update: grad`, trains the target encoder
+directly, and enables SIGReg on both target and context latents.
 SIGReg projection settings live under `model.sigreg`; loss scaling lives under
 `model.loss_weights`, including `action`, `jepa`, `abstract`, `target_sigreg`,
 and `context_sigreg`.

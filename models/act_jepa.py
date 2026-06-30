@@ -21,9 +21,6 @@ class ActJepaConfig(PretrainedConfig):
         target_encoder: dict = None,
         predictor: dict = None,
         decoder: dict = None,
-        sigreg: dict = None,
-        loss_weights: dict = None,
-        target_update: str = 'grad',
         horizon: dict[str, int] = {},  # e.g., {'action': 10}
         **kwargs
     ):
@@ -31,8 +28,6 @@ class ActJepaConfig(PretrainedConfig):
         self.target_encoder = PretrainedConfig(**target_encoder)
         self.predictor = PretrainedConfig(**predictor)
         self.decoder = PretrainedConfig(**decoder)
-        self.sigreg = PretrainedConfig(**(sigreg or {}))
-        self.loss_weights = PretrainedConfig(**(loss_weights or {}))
 
         self.encoder.state_dim = state_dim
         self.target_encoder.state_dim = state_dim
@@ -40,9 +35,26 @@ class ActJepaConfig(PretrainedConfig):
         self.decoder.action_dim = action_dim
         self.action_dim = action_dim
         self.state_dim = state_dim
-        self.target_update = target_update
         self.horizon = horizon
         super().__init__(**kwargs)
+
+
+class ActLejepaConfig(ActJepaConfig):
+    def __init__(
+        self,
+        *args,
+        sigreg: dict = None,
+        loss_weights: dict = None,
+        target_update: str = 'grad',
+        **kwargs
+    ):
+        if target_update != 'grad':
+            raise ValueError(f"ActLejepaConfig requires target_update='grad', got {target_update!r}")
+        super().__init__(*args, **kwargs)
+        self.sigreg = PretrainedConfig(**(sigreg or {}))
+        self.loss_weights = PretrainedConfig(**(loss_weights or {}))
+        self.target_update = target_update
+
 
 ########################## ACT-JEPA Model ##########################
 
@@ -74,7 +86,9 @@ class TargetEncoder(ActEncoder):
         T = config.horizon['observation.state']
         self.state_pos_emb = get_1d_sincos_pos_emb(T, config.hidden_size).to(self.device) # (T, C)
 
+    @torch.no_grad()
     def forward(self, **inputs: dict):
+        assert self.training == False
         task_token = self.task_emb(inputs['task_index']) # (B, C)
         state_tokens = self.state_emb(inputs['observation.state']) # (B, T, C)
         state_tokens = state_tokens + self.state_pos_emb.to(self.device)
@@ -109,6 +123,24 @@ class TargetEncoder(ActEncoder):
         causal_mask = torch.tril(torch.ones((T, T), device=attention_mask.device)).bool()
         full_mask = attention_mask & causal_mask
         return full_mask
+
+
+class GradTargetEncoder(TargetEncoder):
+    def forward(self, **inputs: dict):
+        task_token = self.task_emb(inputs['task_index']) # (B, C)
+        state_tokens = self.state_emb(inputs['observation.state']) # (B, T, C)
+        state_tokens = state_tokens + self.state_pos_emb.to(self.device)
+        hidden_states, ps = pack([task_token, state_tokens], 'b * c')
+        attention_mask = self.get_attention_mask(**inputs)
+
+        # pass output through a transformer
+        for layer in self.layers:
+            hidden_states = layer(hidden_states, attention_mask)
+        hidden_states = self.norm(hidden_states)
+
+        task_token, state_tokens = unpack(hidden_states, ps, 'b * c')
+
+        return state_tokens
 
 
 class Predictor(nn.Module):
@@ -238,8 +270,8 @@ class Jepa(PreTrainedModel):
     '''
     JEPA model consists of a context encoder, target encoder, and a predictor.
 
-    Target encoder update behavior is selected by config.target_update:
-    "ema" for the original ACT-JEPA target and "grad" for ACT-LEJEPA.
+    Target encoder is a copy of a context encoder - weights are identical at initialization.
+    Target encoder is always in eval mode and is updated through EMA not, gradient descent.
     '''
     config_class = ActJepaConfig
     main_input_name = 'observation.state'
@@ -250,12 +282,72 @@ class Jepa(PreTrainedModel):
 
         self.target_encoder = TargetEncoder(config.target_encoder)
         self.target_encoder.load_state_dict(self.context_encoder.state_dict())
-        self.target_update = getattr(config, 'target_update', 'grad')
-        if self.target_update not in {'ema', 'grad'}:
-            raise ValueError(f"Unsupported target_update: {self.target_update}")
-        if self.target_update == 'ema':
-            self.target_encoder.eval()
-            self.target_encoder.requires_grad_(False)
+        self.target_encoder.eval()
+        self.target_encoder.requires_grad_(False)
+
+        self.predictor = Predictor(config.predictor)
+
+        self.abstract_loss = 0.
+
+    def forward(self, return_loss=True, **inputs):
+        '''Predicts abstract representation of a sequence of states.'''
+        encoder_hidden_states = self.context_encoder(**inputs) # (B T_context C)
+        output = dict(encoder_hidden_states=encoder_hidden_states)
+
+        abstract_pred = self.predictor(encoder_hidden_states, **inputs) # (B T_target C)
+        output['abstract_pred'] = abstract_pred
+
+        # calculate loss
+        labels = inputs.get('labels')
+        if labels is not None:
+            self.target_encoder.eval() # Put target encoder in eval
+            with torch.no_grad():
+                abstract_labels = self.target_encoder(**inputs) # (B T_target C)
+                output['abstract_labels'] = abstract_labels
+
+            loss = self.loss_function(**(inputs | output))
+            self.abstract_loss = loss
+            output['loss'] = loss
+            output['abstract_loss'] = loss
+
+        return ModelOutput(output)
+
+    def loss_function(self, abstract_pred, abstract_labels, **kwargs):
+        is_pad = kwargs['observation.state_is_pad']
+        assert abstract_pred.shape == abstract_labels.shape
+        assert abstract_pred.shape[:-1] == is_pad.shape
+        # Extract non-padded tokens
+        abstract_pred = abstract_pred[~is_pad]
+        abstract_labels = abstract_labels[~is_pad]
+        return F.l1_loss(abstract_pred, abstract_labels)
+
+    @torch.no_grad()
+    def update_target_encoder(self, m: float):
+        '''
+        Update the target encoder using EMA (not gradient descent).
+        The target encoder slowly follows the context encoder.
+        '''
+        assert 0 <= m <= 1, f'EMA momentum is not in the valid range [0, 1] {m=}'
+        # NOTE: as m approaches 1.0 (later stage of training), the target encoder
+        # updates become extremely slow, almost freezing its parameters.
+        for (name_c, param_c), (name_t, param_t) in zip(self.context_encoder.named_parameters(), self.target_encoder.named_parameters()):
+            assert name_c == name_t, f'params names must be equal: {name_c=}, {name_t=}'
+            param_t.data.mul_(m).add_((1.0 - m) * param_c.data)
+
+
+class Lejepa(PreTrainedModel):
+    '''
+    ACT-LEJEPA JEPA variant: trains the target encoder directly by gradient.
+    '''
+    config_class = ActLejepaConfig
+    main_input_name = 'observation.state'
+
+    def __init__(self, config: ActLejepaConfig):
+        super().__init__(config)
+        self.context_encoder = ContextEncoder(config.encoder)
+
+        self.target_encoder = GradTargetEncoder(config.target_encoder)
+        self.target_encoder.load_state_dict(self.context_encoder.state_dict())
 
         self.predictor = Predictor(config.predictor)
         self.abstract_loss_weight = getattr(config.loss_weights, 'abstract', 1.0)
@@ -292,7 +384,7 @@ class Jepa(PreTrainedModel):
         # calculate loss
         labels = inputs.get('labels')
         if labels is not None:
-            abstract_labels = self.encode_target(**inputs) # (B T_target C)
+            abstract_labels = self.target_encoder(**inputs) # (B T_target C)
             output['abstract_labels'] = abstract_labels
 
             abstract_loss = self.abstract_loss_function(**(inputs | output))
@@ -320,14 +412,6 @@ class Jepa(PreTrainedModel):
             output['loss'] = loss
         
         return ModelOutput(output)
-
-    def encode_target(self, **inputs):
-        if self.target_update == 'grad':
-            return self.target_encoder(**inputs)
-
-        self.target_encoder.eval()
-        with torch.no_grad():
-            return self.target_encoder(**inputs)
 
     def abstract_loss_function(self, abstract_pred, abstract_labels, **kwargs):
         is_pad = kwargs['observation.state_is_pad']
@@ -360,31 +444,6 @@ class Jepa(PreTrainedModel):
 
     def loss_function(self, abstract_loss, weighted_sigreg_loss):
         return self.abstract_loss_weight * abstract_loss + weighted_sigreg_loss
-    
-    @torch.no_grad()
-    def update_target_encoder(self, m: float):
-        '''
-        EMA update used by baseline ACT-JEPA configs.
-        '''
-        assert 0 <= m <= 1, f'EMA momentum is not in the valid range [0, 1] {m=}'
-        # NOTE: as m approaches 1.0 (later stage of training), the target encoder 
-        # updates become extremely slow, almost freezing its parameters.
-        for (name_c, param_c), (name_t, param_t) in zip(self.context_encoder.named_parameters(), self.target_encoder.named_parameters()):
-            assert name_c == name_t, f'params names must be equal: {name_c=}, {name_t=}'
-            param_t.data.mul_(m).add_((1.0 - m) * param_c.data)
-
-    @torch.no_grad()
-    def copy_context_to_target_encoder(self):
-        '''
-        Hard-sync helper kept for backward-compatible checkpoints/scripts.
-
-        Unlike EMA, this copies the full state_dict, including non-parameter
-        buffers such as normalization running statistics.
-        '''
-        self.target_encoder.load_state_dict(self.context_encoder.state_dict())
-        if self.target_update == 'ema':
-            self.target_encoder.eval()
-            self.target_encoder.requires_grad_(False)
 
 
 class ActJepaModel(PreTrainedModel):
@@ -402,6 +461,65 @@ class ActJepaModel(PreTrainedModel):
 
         self.abstract_loss = 0.
         self.reconstruction_loss = 0.
+
+    def forward(self, return_loss=True, **inputs):
+        output = self.jepa.forward(return_loss, **inputs)
+        encoder_hidden_states = output.encoder_hidden_states # (B Te C)
+        decoder_hidden_states = self.decoder(encoder_hidden_states, **inputs) # (B action_chunk_size C)
+        # pass through the action head
+        action_pred = self.action_head(decoder_hidden_states) # (B action_chunk_size C)
+        output['action_pred'] = action_pred
+
+        # calculate loss
+        labels = inputs.get('labels')
+        if labels is not None:
+            reconstruction_loss = self.reconstruction_loss_function(**(inputs | output))
+            self.reconstruction_loss = reconstruction_loss
+            output['reconstruction_loss'] = reconstruction_loss
+            self.abstract_loss = output.abstract_loss
+
+            loss = self.loss_function(self.reconstruction_loss, self.abstract_loss)
+            output['loss'] = loss
+
+        return output
+
+    def reconstruction_loss_function(self, action_pred, labels, action_is_pad, **kwargs):
+        '''Compute action reconstruction loss in the action space.'''
+        assert action_pred.shape == labels.shape
+        assert action_pred.shape[:-1] == action_is_pad.shape
+        # Extract non-padded actions (both predicted and labels)
+        action_pred = action_pred[~action_is_pad]
+        labels = labels[~action_is_pad]
+        return F.l1_loss(action_pred, labels)
+
+    def loss_function(self, reconstruction_loss, abstract_loss):
+        '''The total loss is calculated as action reconstruction loss + abstract loss.'''
+        return reconstruction_loss + abstract_loss
+
+    @torch.no_grad()
+    def update_target_encoder(self, m: float):
+        return self.jepa.update_target_encoder(m)
+
+    @property
+    def encoder(self):
+        return self.jepa.context_encoder
+
+
+class ActLejepaModel(PreTrainedModel):
+    '''
+    ACT-LEJEPA model: ACT action decoder on top of gradient-trained LEJEPA.
+    '''
+    config_class = ActLejepaConfig
+    main_input_name = 'observation.state'
+
+    def __init__(self, config: ActLejepaConfig):
+        super().__init__(config)
+        self.jepa = Lejepa(config)
+        self.decoder = ActDecoder(config.decoder)
+        self.action_head = nn.Linear(config.decoder.hidden_size, config.action_dim)
+
+        self.abstract_loss = 0.
+        self.reconstruction_loss = 0.
         self.target_sigreg_loss = 0.
         self.context_sigreg_loss = 0.
         self.sigreg_loss = 0.
@@ -413,13 +531,13 @@ class ActJepaModel(PreTrainedModel):
             getattr(config.loss_weights, 'action', 1.0),
         )
         self.jepa_loss_weight = getattr(config.loss_weights, 'jepa', 1.0)
-    
+
     def forward(self, return_loss=True, **inputs):
         output = self.jepa.forward(return_loss, **inputs)
         encoder_hidden_states = output.encoder_hidden_states # (B Te C)
         decoder_hidden_states = self.decoder(encoder_hidden_states, **inputs) # (B action_chunk_size C)
         # pass through the action head
-        action_pred = self.action_head(decoder_hidden_states) # (B action_chunk_size C)        
+        action_pred = self.action_head(decoder_hidden_states) # (B action_chunk_size C)
         output['action_pred'] = action_pred
 
         # calculate loss
@@ -439,7 +557,7 @@ class ActJepaModel(PreTrainedModel):
             output['loss'] = loss
 
         return output
-    
+
     def reconstruction_loss_function(self, action_pred, labels, action_is_pad, **kwargs):
         '''Compute action reconstruction loss in the action space.'''
         assert action_pred.shape == labels.shape
@@ -448,19 +566,11 @@ class ActJepaModel(PreTrainedModel):
         action_pred = action_pred[~action_is_pad]
         labels = labels[~action_is_pad]
         return F.l1_loss(action_pred, labels)
-    
+
     def loss_function(self, reconstruction_loss, jepa_loss):
         '''Compute weighted action and JEPA losses.'''
         return self.reconstruction_loss_weight * reconstruction_loss + self.jepa_loss_weight * jepa_loss
-    
-    @torch.no_grad()
-    def update_target_encoder(self, m: float):
-        return self.jepa.update_target_encoder(m)
 
-    @torch.no_grad()
-    def copy_context_to_target_encoder(self):
-        return self.jepa.copy_context_to_target_encoder()
-    
     @property
     def encoder(self):
         return self.jepa.context_encoder
