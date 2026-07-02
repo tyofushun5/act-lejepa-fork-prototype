@@ -334,6 +334,12 @@ class Jepa(PreTrainedModel):
             assert name_c == name_t, f'params names must be equal: {name_c=}, {name_t=}'
             param_t.data.mul_(m).add_((1.0 - m) * param_c.data)
 
+    @torch.no_grad()
+    def copy_context_to_target_encoder(self):
+        self.target_encoder.load_state_dict(self.context_encoder.state_dict())
+        self.target_encoder.eval()
+        self.target_encoder.requires_grad_(False)
+
 
 class Lejepa(PreTrainedModel):
     '''
@@ -445,6 +451,10 @@ class Lejepa(PreTrainedModel):
     def loss_function(self, abstract_loss, weighted_sigreg_loss):
         return self.abstract_loss_weight * abstract_loss + weighted_sigreg_loss
 
+    @torch.no_grad()
+    def copy_context_to_target_encoder(self):
+        self.target_encoder.load_state_dict(self.context_encoder.state_dict())
+
 
 class ActJepaModel(PreTrainedModel):
     '''
@@ -499,6 +509,10 @@ class ActJepaModel(PreTrainedModel):
     @torch.no_grad()
     def update_target_encoder(self, m: float):
         return self.jepa.update_target_encoder(m)
+
+    @torch.no_grad()
+    def copy_context_to_target_encoder(self):
+        return self.jepa.copy_context_to_target_encoder()
 
     @property
     def encoder(self):
@@ -570,6 +584,10 @@ class ActLejepaModel(PreTrainedModel):
     def loss_function(self, reconstruction_loss, jepa_loss):
         '''Compute weighted action and JEPA losses.'''
         return self.reconstruction_loss_weight * reconstruction_loss + self.jepa_loss_weight * jepa_loss
+
+    @torch.no_grad()
+    def copy_context_to_target_encoder(self):
+        return self.jepa.copy_context_to_target_encoder()
 
     @property
     def encoder(self):

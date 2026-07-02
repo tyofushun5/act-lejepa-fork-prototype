@@ -4,7 +4,7 @@ app: frozen jepa + action predictor pusht
 training_arguments:
   # seed
   seed: 42
-  max_steps: 4000
+  max_steps: 5000
 
   # optimization
   optim: adamw_torch
@@ -49,7 +49,7 @@ feature_config: &horizon
 # --------------------- Policy model ---------------------
 model: &model
   policy_name: ActionChunkingPolicy
-  class_name: Jepa
+  class_name: Lejepa
   horizon: *horizon
 
   encoder: &common_params

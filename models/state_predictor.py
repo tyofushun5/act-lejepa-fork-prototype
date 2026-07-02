@@ -37,15 +37,16 @@ class StatePredictorModel(nn.Module):
         self.rmse_loss = self.ate_loss = 0.
     
     def forward(self, return_loss=True, **inputs):
-        # Keep the full target sequence in inputs. The JEPA context encoder consumes
-        # only the current state token internally (see ContextEncoder._get_state_token), 
-        # while the predictor uses the full sequence masks/horizon for state prediction.
+        # Keep the full target sequence in inputs for the predictor/masks/labels, but
+        # pass only the current state into the frozen backbone to avoid future leakage.
         assert len(inputs['observation.state'].shape) == 3
+        encoder_inputs = dict(inputs)
+        encoder_inputs['observation.state'] = inputs['observation.state'][:, 0, :]
 
         # Pass through the frozen backbone
         self.encoder.eval()
         with torch.no_grad():
-            encoder_hidden_states = self.encoder(**inputs) # (B, T, C)
+            encoder_hidden_states = self.encoder(**encoder_inputs) # (B, T, C)
 
         predictor_hidden_states = self.predictor(encoder_hidden_states, **inputs) # (B, T, C)
         pred = self.state_head(predictor_hidden_states) # (B, T, state_dim)
