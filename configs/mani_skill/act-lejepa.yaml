@@ -14,8 +14,8 @@ training_arguments:
   weight_decay: 0.1
 
   # dataloader
-  per_device_train_batch_size: 32
-  per_device_eval_batch_size: 32
+  per_device_train_batch_size: 64
+  per_device_eval_batch_size: 64
   dataloader_num_workers: 16
   dataloader_drop_last: true
 
@@ -65,6 +65,7 @@ model:
   target_encoder:
     <<: *common_params
     causal: false
+    attention_dropout: 0.0 # clean labels: no dropout in the target path
 
   decoder:
     <<: *common_params
@@ -88,7 +89,7 @@ model:
     jepa: 1.0
     abstract: 1.0
     target_sigreg: 0.09
-    context_sigreg: 0.09
+    context_sigreg: 0.0
 
 # --------------------- ManiSkill settings ---------------------
 dataset:

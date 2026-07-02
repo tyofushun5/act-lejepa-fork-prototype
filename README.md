@@ -80,13 +80,15 @@ python -m scripts.train --config_path configs/pusht/act-lejepa.yaml
 ```
 
 `act-jepa.yaml` uses `ActJepaModel` and keeps the original ACT-JEPA target
-encoder behavior from the 2026-06-24 baseline: no gradient through the target
-encoder, with `EmaUpdateCallback` updating it by EMA. `act-lejepa.yaml` uses
-`ActLejepaModel` with `model.target_update: grad`, trains the target encoder
-directly, and enables SIGReg on both target and context latents.
-SIGReg projection settings live under `model.sigreg`; loss scaling lives under
-`model.loss_weights`, including `action`, `jepa`, `abstract`, `target_sigreg`,
-and `context_sigreg`.
+encoder behavior: no gradient through the target encoder, with
+`EmaUpdateCallback` updating it by EMA. `act-lejepa.yaml` uses `ActLejepaModel`
+with `model.target_update: grad`, following the LeJEPA reference design
+(`samples/le-wm-main`): the gradient-trained target encoder embeds each state
+independently (no cross-timestep attention, no dropout in the target path),
+the prediction objective is MSE, and SIGReg is applied to the target latents
+only. SIGReg projection settings live under `model.sigreg`; loss scaling lives
+under `model.loss_weights`, including `action`, `jepa`, `abstract`,
+`target_sigreg`, and `context_sigreg`.
 
 Available environments are `pusht`, `metaworld`, and `mani_skill`. Available
 model configs include `act`, `act-jepa`, `act-lejepa`, `ar_transformer`,
