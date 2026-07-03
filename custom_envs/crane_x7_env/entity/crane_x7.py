@@ -51,29 +51,19 @@ INIT_QPOS = np.array([0.0, np.pi / 8, 0.0, -np.pi * 5 / 8, 0.0, -np.pi / 2, 0.0,
 # Top-down end-effector orientation for IK (wxyz).
 EE_DOWN_QUAT = np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float64)
 
-_ROBOT_DEFAULTS = get_robot_defaults()
+DEFAULT_GRIPPER_OPEN = 0.9  # positive = open
+# Stop at contact instead of commanding the URDF squeeze limit (-0.087), which
+# can drive the fingers visually through the cube during scripted collection.
+DEFAULT_GRIPPER_CLOSE = 0.0
 
 
-def _array_default(name, fallback, size):
-    values = np.asarray(_ROBOT_DEFAULTS.get(name, fallback), dtype=np.float64).reshape(-1)
+def _array_default(defaults, name, fallback, size):
+    values = np.asarray(defaults.get(name, fallback), dtype=np.float64).reshape(-1)
     if values.shape != (size,):
         raise ValueError(f'robot.{name} must contain {size} values, got {values.shape[0]}')
     return values
 
 
-GRIPPER_OPEN = float(_ROBOT_DEFAULTS.get('gripper_open', 0.9))  # positive = open
-# Stop at contact instead of commanding the URDF squeeze limit (-0.087), which
-# can drive the fingers visually through the cube during scripted collection.
-GRIPPER_CLOSE = float(_ROBOT_DEFAULTS.get('gripper_close', 0.0))
-GRIPPER_FORCE_LIMIT = float(_ROBOT_DEFAULTS.get('gripper_force_limit', 0.9))
-GRIPPER_KP = float(_ROBOT_DEFAULTS.get('gripper_kp', 2.75))
-GRIPPER_KV = float(_ROBOT_DEFAULTS.get('gripper_kv', 0.275))
-ARM_KP = _array_default('arm_kp', [3520, 3520, 2640, 2640, 1760, 1760, 1760], 7)
-ARM_KV = _array_default('arm_kv', [352, 352, 264, 264, 176, 176, 176], 7)
-
-MAX_JOINT_DELTA_FROM_REST = 1.2  # rad, IK sanity clip (from the reference)
-MAX_IK_JOINT_STEP = float(_ROBOT_DEFAULTS.get('max_ik_joint_step', 0.10))
-MAX_GRIPPER_JOINT_STEP = float(_ROBOT_DEFAULTS.get('max_gripper_joint_step', 0.05))
 GRIPPER_COLLISION_LINKS = {
     'crane_x7_gripper_base_link',
     'crane_x7_gripper_finger_a_link',
@@ -137,6 +127,39 @@ def resolve_urdf(urdf_path=None) -> str:
 class CraneX7(Entity):
     def __init__(self, scene=None, surface=None, urdf_path=None, workspace=None):
         super().__init__(scene=scene, surface=surface)
+        robot_defaults = get_robot_defaults()
+        self.gripper_open = float(robot_defaults.get('gripper_open', DEFAULT_GRIPPER_OPEN))
+        self.gripper_close = float(robot_defaults.get('gripper_close', DEFAULT_GRIPPER_CLOSE))
+        self.gripper_force_limit = float(robot_defaults.get('gripper_force_limit', 0.9))
+        self.gripper_kp = float(robot_defaults.get('gripper_kp', 2.75))
+        self.gripper_kv = float(robot_defaults.get('gripper_kv', 0.275))
+        self.arm_kp = _array_default(
+            robot_defaults, 'arm_kp',
+            [3520, 3520, 2640, 2640, 1760, 1760, 1760], 7,
+        )
+        self.arm_kv = _array_default(
+            robot_defaults, 'arm_kv',
+            [352, 352, 264, 264, 176, 176, 176], 7,
+        )
+        self.max_ik_joint_step = float(robot_defaults.get('max_ik_joint_step', 0.10))
+        self.max_gripper_joint_step = float(robot_defaults.get('max_gripper_joint_step', 0.05))
+        urdf_defaults = robot_defaults.get('urdf', {})
+        self.urdf_decimate = bool(urdf_defaults.get('decimate', False))
+        self.urdf_convexify = bool(urdf_defaults.get('convexify', True))
+        self.decompose_robot_error_threshold = float(
+            urdf_defaults.get('decompose_robot_error_threshold', 0.0)
+        )
+        coacd_defaults = robot_defaults.get('coacd', {})
+        self.coacd_options = {
+            'threshold': float(coacd_defaults.get('threshold', 0.05)),
+            'max_convex_hull': int(coacd_defaults.get('max_convex_hull', -1)),
+            'preprocess_resolution': int(coacd_defaults.get('preprocess_resolution', 40)),
+            'resolution': int(coacd_defaults.get('resolution', 1500)),
+            'mcts_iterations': int(coacd_defaults.get('mcts_iterations', 120)),
+            'mcts_max_depth': int(coacd_defaults.get('mcts_max_depth', 4)),
+        }
+        self.init_qpos = INIT_QPOS.copy()
+        self.init_qpos[7:] = self.gripper_open
         self.urdf_path = resolve_urdf(urdf_path)
         self.workspace = workspace or Workspace()
 
@@ -160,17 +183,10 @@ class CraneX7(Entity):
                 file=self.urdf_path,
                 fixed=True,
                 requires_jac_and_IK=True,
-                decimate=False,
-                convexify=True,
-                decompose_robot_error_threshold=0.0,
-                coacd_options=gs.options.CoacdOptions(
-                    threshold=0.05,
-                    max_convex_hull=-1,
-                    preprocess_resolution=40,
-                    resolution=1500,
-                    mcts_iterations=120,
-                    mcts_max_depth=4,
-                ),
+                decimate=self.urdf_decimate,
+                convexify=self.urdf_convexify,
+                decompose_robot_error_threshold=self.decompose_robot_error_threshold,
+                coacd_options=gs.options.CoacdOptions(**self.coacd_options),
                 prioritize_urdf_material=True,
             ),
         )
@@ -194,22 +210,22 @@ class CraneX7(Entity):
         # Stiffer than the reference gains (800/80): with collision meshes and
         # inertias parsed correctly, those left ~3 cm of gravity sag at the EE.
         self.entity.set_dofs_kp(
-            np.concatenate([ARM_KP, [GRIPPER_KP, GRIPPER_KP]]),
+            np.concatenate([self.arm_kp, [self.gripper_kp, self.gripper_kp]]),
             self.all_dofs,
         )
         self.entity.set_dofs_kv(
-            np.concatenate([ARM_KV, [GRIPPER_KV, GRIPPER_KV]]),
+            np.concatenate([self.arm_kv, [self.gripper_kv, self.gripper_kv]]),
             self.all_dofs,
         )
         self.entity.set_dofs_force_range(
             np.array(
                 [-87, -87, -87, -87, -12, -12, -12,
-                 -GRIPPER_FORCE_LIMIT, -GRIPPER_FORCE_LIMIT],
+                 -self.gripper_force_limit, -self.gripper_force_limit],
                 dtype=np.float64,
             ),
             np.array(
                 [87, 87, 87, 87, 12, 12, 12,
-                 GRIPPER_FORCE_LIMIT, GRIPPER_FORCE_LIMIT],
+                 self.gripper_force_limit, self.gripper_force_limit],
                 dtype=np.float64,
             ),
             self.all_dofs,
@@ -219,13 +235,13 @@ class CraneX7(Entity):
         self.dof_upper = self._np(upper).astype(np.float64)
         self.command_lower = self.dof_lower.copy()
         self.command_upper = self.dof_upper.copy()
-        self.command_lower[7:] = np.maximum(self.command_lower[7:], GRIPPER_CLOSE)
+        self.command_lower[7:] = np.maximum(self.command_lower[7:], self.gripper_close)
 
     # ------------------------------------------------------------ control
 
     def reset(self):
-        self.entity.set_dofs_position(INIT_QPOS, self.all_dofs, zero_velocity=True)
-        self.entity.control_dofs_position(INIT_QPOS, self.all_dofs)
+        self.entity.set_dofs_position(self.init_qpos, self.all_dofs, zero_velocity=True)
+        self.entity.control_dofs_position(self.init_qpos, self.all_dofs)
         self.last_ik_action = None
 
     def control_qpos(self, qpos_target):
@@ -269,7 +285,10 @@ class CraneX7(Entity):
         raw_action[:7] = qpos[self.arm_dofs]
         raw_action[7] = float(gripper)
 
-        max_step = np.array([MAX_IK_JOINT_STEP] * 7 + [MAX_GRIPPER_JOINT_STEP], dtype=np.float64)
+        max_step = np.array(
+            [self.max_ik_joint_step] * 7 + [self.max_gripper_joint_step],
+            dtype=np.float64,
+        )
         action = prev_action + np.clip(raw_action - prev_action, -max_step, max_step)
         action_lower = np.concatenate([self.command_lower[:7], [self.command_lower[7]]])
         action_upper = np.concatenate([self.command_upper[:7], [self.command_upper[7]]])

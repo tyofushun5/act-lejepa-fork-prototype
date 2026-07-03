@@ -45,6 +45,7 @@ class CraneX7Env(gym.Env):
         device=None,
         show_viewer=None,
         urdf_path=None,
+        show_cameras=None,
         visualize_camera=None,
         camera_view=None,
         cam_pos=None,
@@ -57,21 +58,28 @@ class CraneX7Env(gym.Env):
         env_defaults = get_env_defaults()
         img_size = env_defaults.get('img_size', 128) if img_size is None else img_size
         cube_size = env_defaults.get('cube_size', 0.025) if cube_size is None else cube_size
+        cube_color = env_defaults.get('cube_color', (0.25, 0.25, 0.25))
+        cube_friction = env_defaults.get('cube_friction', 2.0)
         cube_margin = env_defaults.get('cube_margin', 0.03) if cube_margin is None else cube_margin
         success_height = (
             env_defaults.get('success_height')
             if success_height is None else success_height
         )
+        dt = env_defaults.get('dt', 0.0025)
         substeps = env_defaults.get('substeps', 40) if substeps is None else substeps
         device = env_defaults.get('device', 'cpu') if device is None else device
+        plane_reflection = bool(env_defaults.get('plane_reflection', False))
+        rigid_options = env_defaults.get('rigid_options', {})
         show_viewer = (
             env_defaults.get('show_viewer', False)
             if show_viewer is None else show_viewer
         )
-        visualize_camera = (
-            env_defaults.get('visualize_camera', False)
-            if visualize_camera is None else visualize_camera
-        )
+        if show_cameras is None:
+            show_cameras = (
+                visualize_camera
+                if visualize_camera is not None
+                else env_defaults.get('show_cameras', False)
+            )
         camera_view = (
             env_defaults.get('camera_view', 'right')
             if camera_view is None else camera_view
@@ -90,15 +98,16 @@ class CraneX7Env(gym.Env):
         self.img_size = int(img_size)
         self.cube_margin = float(cube_margin)
         self.substeps = int(substeps)
-        self.visualize_camera = bool(visualize_camera)
+        self.show_cameras = bool(show_cameras)
         self.camera_view = camera_view
 
-        floor_cfg = env_defaults.get('floor', {})
-        floor_reflective = bool(floor_cfg.get('reflective', False))
         self.genesis_cfg = GenesisConfig(
             device=device,
             show_viewer=show_viewer,
-            renderer='raytracer' if floor_reflective else 'rasterizer',
+            dt=dt,
+            show_cameras=show_cameras,
+            plane_reflection=plane_reflection,
+            rigid_options=rigid_options,
         )
         self.scene = self.genesis_cfg.gs_init()
 
@@ -115,14 +124,16 @@ class CraneX7Env(gym.Env):
         # Floor plane below the table, matching the sample environment. The
         # table collision box itself provides the tabletop at z=0.
         floor = gs.morphs.Plane(pos=(0.0, 0.0, -self.table.table_height))
-        if floor_reflective:
-            self.scene.add_entity(floor, surface=gs.surfaces.Reflective())
-        else:
-            self.scene.add_entity(floor)
+        self.scene.add_entity(floor)
 
         self.robot = CraneX7(scene=self.scene, urdf_path=urdf_path, workspace=self.workspace)
         self.robot.create()
-        self.cube = Cube(scene=self.scene, size=cube_size)
+        self.cube = Cube(
+            scene=self.scene,
+            size=cube_size,
+            color=cube_color,
+            friction=cube_friction,
+        )
         self.cube.create()
         self.camera = ObsCamera(
             scene=self.scene, res=(self.img_size, self.img_size),
@@ -132,8 +143,6 @@ class CraneX7Env(gym.Env):
 
         self.scene.build()
         self.robot.setup()
-        if self.visualize_camera:
-            self.camera.visualize()
 
         self.observation_space = gym.spaces.Dict({
             'observation.state': gym.spaces.Box(-np.inf, np.inf, (9,), np.float32),

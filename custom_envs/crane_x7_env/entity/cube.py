@@ -19,7 +19,9 @@ class Cube(Entity):
         if center is None:
             center = (0.30, 0.0, self.half + 1e-3)
         self.center = np.array(center, dtype=np.float64)
-        self.color = color
+        self.color = tuple(float(c) for c in color)
+        if len(self.color) != 3:
+            raise ValueError(f'cube color must contain 3 values, got {len(self.color)}')
         self.friction = float(friction)
         self.entity = None
 

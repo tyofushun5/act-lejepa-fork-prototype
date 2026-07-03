@@ -36,11 +36,12 @@ if [[ -n "${SHOW_VIEWER:-}" ]]; then
   fi
 fi
 
-if [[ -n "${VISUALIZE_CAMERA:-}" ]]; then
-  if [[ "${VISUALIZE_CAMERA}" != "0" ]]; then
-    cmd+=(--visualize_camera)
+CAMERA_VIS_FLAG="${SHOW_CAMERAS:-${VISUALIZE_CAMERA:-}}"
+if [[ -n "${CAMERA_VIS_FLAG}" ]]; then
+  if [[ "${CAMERA_VIS_FLAG}" != "0" ]]; then
+    cmd+=(--show_cameras)
   else
-    cmd+=(--no-visualize_camera)
+    cmd+=(--no-show_cameras)
   fi
 fi
 

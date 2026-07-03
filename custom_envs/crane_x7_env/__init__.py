@@ -10,5 +10,5 @@ Layout mirrors the reference implementation under
 genesis itself is imported lazily on env creation, so importing
 `custom_envs` does not require it.
 '''
-from .entity.crane_x7 import GRIPPER_CLOSE, GRIPPER_OPEN, INIT_QPOS
+from .entity.crane_x7 import INIT_QPOS
 from .env import CraneX7Env, make_crane_x7_env

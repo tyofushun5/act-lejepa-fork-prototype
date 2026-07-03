@@ -44,12 +44,12 @@ def load_defaults_config(config_path):
 
 
 def collection_default(config, key, fallback=None):
+    environment = config.get('environment', {})
+    if key in {'camera_view', 'show_viewer', 'show_cameras', 'img_size'}:
+        return environment.get(key, fallback)
     collection = config.get('collection', {})
     if key in collection:
         return collection[key]
-    environment = config.get('environment', {})
-    if key in {'img_size', 'show_viewer', 'visualize_camera', 'camera_view'}:
-        return environment.get(key, fallback)
     return fallback
 
 
@@ -61,7 +61,7 @@ def make_env(args):
         img_size=args.img_size,
         max_episode_steps=args.max_steps,
         show_viewer=args.show_viewer,
-        visualize_camera=args.visualize_camera,
+        show_cameras=args.show_cameras,
         camera_view=args.camera_view,
     )
 
@@ -70,9 +70,9 @@ class ScriptedLiftExpert:
     '''Cartesian waypoint expert: hover above the cube, descend, close the
     gripper, and lift. Emits absolute joint-position actions via IK.'''
 
-    def __init__(self, env, z_hover=0.20, z_grasp=None, z_lift=0.28,
-                 grasp_ee_clearance=0.065, step_size=0.010, reach_tol=0.02,
-                 grasp_steps=20, pregrasp=0.45):
+    def __init__(self, env, *, z_hover, z_grasp, z_lift,
+                 grasp_ee_clearance, step_size, reach_tol,
+                 grasp_steps, pregrasp):
         self.env = env.unwrapped
         self.z_hover = z_hover
         self.z_grasp_override = z_grasp
@@ -98,15 +98,15 @@ class ScriptedLiftExpert:
             self.z_grasp = float(self.z_grasp_override)
 
     def _waypoint_and_grip(self):
-        from custom_envs.crane_x7_env import GRIPPER_CLOSE
         x, y = self.cube_xy
+        gripper_close = self.env.robot.gripper_close
         if self.phase == 'hover':
             return np.array([x, y, self.z_hover]), self.pregrasp
         if self.phase == 'descend':
             return np.array([x, y, self.z_grasp]), self.pregrasp
         if self.phase == 'grasp':
-            return np.array([x, y, self.z_grasp]), GRIPPER_CLOSE
-        return np.array([x, y, self.z_lift]), GRIPPER_CLOSE  # lift
+            return np.array([x, y, self.z_grasp]), gripper_close
+        return np.array([x, y, self.z_lift]), gripper_close  # lift
 
     def _advance_phase(self, waypoint):
         ee = self.env.get_ee_pos()
@@ -197,6 +197,9 @@ def main():
                         default=collection_default(defaults, 'img_size', 128))
     parser.add_argument('--seed', type=int,
                         default=collection_default(defaults, 'seed', 0))
+    parser.add_argument('--z_hover', type=float,
+                        default=collection_default(defaults, 'z_hover', 0.20),
+                        help='EE height while approaching above the cube')
     parser.add_argument('--z_grasp', type=float,
                         default=collection_default(defaults, 'z_grasp', None),
                         help='fixed EE height when grasping; defaults to cube top + clearance')
@@ -206,18 +209,31 @@ def main():
     parser.add_argument('--z_lift', type=float,
                         default=collection_default(defaults, 'z_lift', 0.28),
                         help='EE height after grasping')
+    parser.add_argument('--expert_step_size', type=float,
+                        default=collection_default(defaults, 'expert_step_size', 0.010),
+                        help='Cartesian step size for the scripted expert target')
+    parser.add_argument('--reach_tol', type=float,
+                        default=collection_default(defaults, 'reach_tol', 0.02),
+                        help='distance tolerance for switching expert phases')
+    parser.add_argument('--grasp_steps', type=int,
+                        default=collection_default(defaults, 'grasp_steps', 20),
+                        help='number of control steps to hold the grasp before lifting')
+    parser.add_argument('--pregrasp', type=float,
+                        default=collection_default(defaults, 'pregrasp', 0.45),
+                        help='gripper command used while approaching the cube')
     parser.add_argument('--settle_steps', type=int,
                         default=collection_default(defaults, 'settle_steps', 20),
                         help='raw physics steps after reset before planning/recording')
     parser.add_argument('--show_viewer', action=argparse.BooleanOptionalAction,
                         default=collection_default(defaults, 'show_viewer', False),
-                        help='open the Genesis viewer to watch the collection')
-    parser.add_argument('--visualize_camera', action=argparse.BooleanOptionalAction,
-                        default=collection_default(defaults, 'visualize_camera', False),
-                        help='draw the observation camera frustum in the Genesis viewer')
+                        help='open the Genesis viewer; default from environment.show_viewer')
+    parser.add_argument('--show_cameras', '--visualize_camera', dest='show_cameras',
+                        action=argparse.BooleanOptionalAction,
+                        default=collection_default(defaults, 'show_cameras', False),
+                        help='draw Genesis camera bodies/frustums; default from environment.show_cameras')
     parser.add_argument('--camera_view', choices=camera_view_choices,
                         default=collection_default(defaults, 'camera_view', 'right'),
-                        help='observation camera preset; YAML default is right')
+                        help='observation camera preset from environment.camera_view')
     parser.add_argument('--keep_failures', action=argparse.BooleanOptionalAction,
                         default=collection_default(defaults, 'keep_failures', False),
                         help='also keep unsuccessful episodes')
@@ -229,9 +245,14 @@ def main():
     env = make_env(args)
     expert = ScriptedLiftExpert(
         env,
+        z_hover=args.z_hover,
         z_grasp=args.z_grasp,
         z_lift=args.z_lift,
         grasp_ee_clearance=args.grasp_ee_clearance,
+        step_size=args.expert_step_size,
+        reach_tol=args.reach_tol,
+        grasp_steps=args.grasp_steps,
+        pregrasp=args.pregrasp,
     )
     fps = env.metadata['render_fps']
 

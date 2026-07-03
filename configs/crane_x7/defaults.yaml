@@ -1,12 +1,28 @@
 environment:
   img_size: 128
   cube_size: 0.025
+  cube_color: [0.25, 0.25, 0.25]
+  cube_friction: 2.0
   cube_margin: 0.03
   success_height: null
+  dt: 0.0025
   substeps: 40
   device: cpu
-  show_viewer: false
-  visualize_camera: false
+  show_viewer: true
+  # Genesis VisOptions.show_cameras; draws camera bodies/frustums in the viewer.
+  show_cameras: false
+  # Genesis VisOptions.plane_reflection; works with the rasterized viewer/cameras.
+  plane_reflection: true
+  rigid_options:
+    enable_self_collision: false
+    iterations: 400
+    tolerance: 1.0e-8
+    ls_iterations: 120
+    noslip_iterations: 10
+    constraint_timeconst: 0.005
+    contact_pruning_tolerance: null
+    max_collision_pairs: 512
+    use_gjk_collision: true
   # camera_view choices:
   #   right: current/default observation view from the manipulator's right side
   #   left: mirrored view from the manipulator's left side
@@ -27,11 +43,6 @@ environment:
       lookat: [0.200, 0.0, 0.10]
       fov: 30.0
 
-  floor:
-    # true uses Genesis RayTracer/LuisaRenderPy for observation images;
-    # the interactive viewer is still rasterized.
-    reflective: false
-
 robot:
   gripper_open: 0.9
   gripper_close: 0.0
@@ -42,20 +53,31 @@ robot:
   arm_kv: [352, 352, 264, 264, 176, 176, 176]
   max_ik_joint_step: 0.10
   max_gripper_joint_step: 0.05
+  urdf:
+    decimate: false
+    convexify: true
+    decompose_robot_error_threshold: 0.0
+  coacd:
+    threshold: 0.05
+    max_convex_hull: -1
+    preprocess_resolution: 40
+    resolution: 1500
+    mcts_iterations: 120
+    mcts_max_depth: 4
 
 collection:
   repo_id: local/crane_x7_lift
   num_episodes: 60
   max_steps: 300
-  img_size: 128
   seed: 0
-  show_viewer: true
-  visualize_camera: true
-  # Must be one of environment.camera_views: right, left, front.
-  camera_view: right
+  z_hover: 0.20
   z_grasp: null
   grasp_ee_clearance: 0.065
   z_lift: 0.28
+  expert_step_size: 0.010
+  reach_tol: 0.02
+  grasp_steps: 20
+  pregrasp: 0.45
   settle_steps: 20
   keep_failures: false
   max_attempts_factor: 3
