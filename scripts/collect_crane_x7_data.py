@@ -11,8 +11,8 @@
 # meta) under the local Hugging Face cache, so training configs can reference
 # the dataset by repo_id without uploading it to the Hub:
 #
-#   python -m scripts.collect_crane_x7_data --repo_id local/crane_x7_lift \
-#       --num_episodes 60
+#   python -m scripts.collect_crane_x7_data \
+#       --config_path configs/crane_x7/defaults.yaml
 #
 #   dataset:
 #     repo_ids: [local/crane_x7_lift]
@@ -20,16 +20,37 @@
 #     test_episodes_range: [50, 60]
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+_DEFAULT_CONFIG_PATH = Path(
+    os.environ.get('CRANE_X7_DEFAULTS', _REPO_ROOT / 'configs/crane_x7/defaults.yaml')
+)
 
 from init import init; init()
 
 import numpy as np
+
+
+def load_defaults_config(config_path):
+    import yaml
+
+    with Path(config_path).open('r') as f:
+        return yaml.safe_load(f) or {}
+
+
+def collection_default(config, key, fallback=None):
+    collection = config.get('collection', {})
+    if key in collection:
+        return collection[key]
+    environment = config.get('environment', {})
+    if key in {'img_size', 'show_viewer', 'visualize_camera', 'camera_view'}:
+        return environment.get(key, fallback)
+    return fallback
 
 
 def make_env(args):
@@ -40,6 +61,8 @@ def make_env(args):
         img_size=args.img_size,
         max_episode_steps=args.max_steps,
         show_viewer=args.show_viewer,
+        visualize_camera=args.visualize_camera,
+        camera_view=args.camera_view,
     )
 
 
@@ -152,25 +175,56 @@ def collect_episode(env, expert, seed, episode_index, fps, settle_steps):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Collect CRANE-X7 demonstrations')
-    parser.add_argument('--repo_id', type=str, default='local/crane_x7_lift')
-    parser.add_argument('--num_episodes', type=int, default=60)
-    parser.add_argument('--max_steps', type=int, default=300)
-    parser.add_argument('--img_size', type=int, default=128)
-    parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--z_grasp', type=float, default=None,
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument('--config_path', type=str, default=str(_DEFAULT_CONFIG_PATH),
+                               help='Path to the CRANE-X7 defaults YAML')
+    config_args, _ = config_parser.parse_known_args()
+    defaults = load_defaults_config(config_args.config_path)
+    camera_views = defaults.get('environment', {}).get('camera_views', {})
+    camera_view_choices = tuple(camera_views) or ('right',)
+
+    parser = argparse.ArgumentParser(
+        description='Collect CRANE-X7 demonstrations',
+        parents=[config_parser],
+    )
+    parser.add_argument('--repo_id', type=str,
+                        default=collection_default(defaults, 'repo_id', 'local/crane_x7_lift'))
+    parser.add_argument('--num_episodes', type=int,
+                        default=collection_default(defaults, 'num_episodes', 60))
+    parser.add_argument('--max_steps', type=int,
+                        default=collection_default(defaults, 'max_steps', 300))
+    parser.add_argument('--img_size', type=int,
+                        default=collection_default(defaults, 'img_size', 128))
+    parser.add_argument('--seed', type=int,
+                        default=collection_default(defaults, 'seed', 0))
+    parser.add_argument('--z_grasp', type=float,
+                        default=collection_default(defaults, 'z_grasp', None),
                         help='fixed EE height when grasping; defaults to cube top + clearance')
-    parser.add_argument('--grasp_ee_clearance', type=float, default=0.065,
+    parser.add_argument('--grasp_ee_clearance', type=float,
+                        default=collection_default(defaults, 'grasp_ee_clearance', 0.065),
                         help='EE height above the measured cube top when --z_grasp is not set')
-    parser.add_argument('--z_lift', type=float, default=0.28, help='EE height after grasping')
-    parser.add_argument('--settle_steps', type=int, default=20,
+    parser.add_argument('--z_lift', type=float,
+                        default=collection_default(defaults, 'z_lift', 0.28),
+                        help='EE height after grasping')
+    parser.add_argument('--settle_steps', type=int,
+                        default=collection_default(defaults, 'settle_steps', 20),
                         help='raw physics steps after reset before planning/recording')
-    parser.add_argument('--show_viewer', action='store_true',
+    parser.add_argument('--show_viewer', action=argparse.BooleanOptionalAction,
+                        default=collection_default(defaults, 'show_viewer', False),
                         help='open the Genesis viewer to watch the collection')
-    parser.add_argument('--keep_failures', action='store_true',
+    parser.add_argument('--visualize_camera', action=argparse.BooleanOptionalAction,
+                        default=collection_default(defaults, 'visualize_camera', False),
+                        help='draw the observation camera frustum in the Genesis viewer')
+    parser.add_argument('--camera_view', choices=camera_view_choices,
+                        default=collection_default(defaults, 'camera_view', 'right'),
+                        help='observation camera preset; YAML default is right')
+    parser.add_argument('--keep_failures', action=argparse.BooleanOptionalAction,
+                        default=collection_default(defaults, 'keep_failures', False),
                         help='also keep unsuccessful episodes')
-    parser.add_argument('--max_attempts_factor', type=int, default=3)
+    parser.add_argument('--max_attempts_factor', type=int,
+                        default=collection_default(defaults, 'max_attempts_factor', 3))
     args = parser.parse_args()
+    os.environ['CRANE_X7_DEFAULTS'] = str(Path(args.config_path).resolve())
 
     env = make_env(args)
     expert = ScriptedLiftExpert(

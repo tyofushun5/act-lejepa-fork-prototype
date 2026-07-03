@@ -12,7 +12,7 @@ class Cube(Entity):
     '''
 
     def __init__(self, scene=None, surface=None, center=None,
-                 size=0.025, color=(0.45, 0.45, 0.45), friction=2.0):
+                 size=0.025, color=(0.25, 0.25, 0.25), friction=2.0):
         super().__init__(scene=scene, surface=surface)
         self.size = float(size)
         self.half = self.size / 2

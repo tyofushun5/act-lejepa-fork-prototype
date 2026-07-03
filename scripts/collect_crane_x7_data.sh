@@ -13,27 +13,51 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
   fi
 fi
 
-REPO_ID="${REPO_ID:-local/crane_x7_lift}"
-NUM_EPISODES="${NUM_EPISODES:-60}"
-SHOW_VIEWER="${SHOW_VIEWER:-1}"
-KEEP_FAILURES="${KEEP_FAILURES:-0}"
+CONFIG_PATH="${CONFIG_PATH:-configs/crane_x7/defaults.yaml}"
 
 cmd=(
   "${PYTHON_BIN}" -m scripts.collect_crane_x7_data
-  --repo_id "${REPO_ID}"
-  --num_episodes "${NUM_EPISODES}"
+  --config_path "${CONFIG_PATH}"
 )
 
-if [[ "${SHOW_VIEWER}" != "0" ]]; then
-  cmd+=(--show_viewer)
+if [[ -n "${REPO_ID:-}" ]]; then
+  cmd+=(--repo_id "${REPO_ID}")
 fi
 
-if [[ "${KEEP_FAILURES}" != "0" ]]; then
-  cmd+=(--keep_failures)
+if [[ -n "${NUM_EPISODES:-}" ]]; then
+  cmd+=(--num_episodes "${NUM_EPISODES}")
+fi
+
+if [[ -n "${SHOW_VIEWER:-}" ]]; then
+  if [[ "${SHOW_VIEWER}" != "0" ]]; then
+    cmd+=(--show_viewer)
+  else
+    cmd+=(--no-show_viewer)
+  fi
+fi
+
+if [[ -n "${VISUALIZE_CAMERA:-}" ]]; then
+  if [[ "${VISUALIZE_CAMERA}" != "0" ]]; then
+    cmd+=(--visualize_camera)
+  else
+    cmd+=(--no-visualize_camera)
+  fi
+fi
+
+if [[ -n "${CAMERA_VIEW:-}" ]]; then
+  cmd+=(--camera_view "${CAMERA_VIEW}")
+fi
+
+if [[ -n "${KEEP_FAILURES:-}" ]]; then
+  if [[ "${KEEP_FAILURES}" != "0" ]]; then
+    cmd+=(--keep_failures)
+  else
+    cmd+=(--no-keep_failures)
+  fi
 fi
 
 cmd+=("$@")
 
 echo "Running data collection"
-echo "repo_id=${REPO_ID} num_episodes=${NUM_EPISODES} show_viewer=${SHOW_VIEWER} keep_failures=${KEEP_FAILURES}"
+echo "config_path=${CONFIG_PATH}"
 "${cmd[@]}"

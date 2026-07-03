@@ -16,6 +16,7 @@ class GenesisConfig:
         logging_level='warning',
         show_viewer=False,
         dt=0.0025,
+        renderer='rasterizer',
     ):
         self.device = str(device)
         self.seed = seed
@@ -23,7 +24,27 @@ class GenesisConfig:
         self.logging_level = logging_level
         self.show_viewer = show_viewer
         self.dt = dt
+        self.renderer = str(renderer)
         self.scene = None
+
+    def _make_renderer(self, gs):
+        if self.renderer == 'raytracer':
+            try:
+                from genesis.vis import raytracer as _raytracer  # noqa: F401
+            except Exception as exc:
+                raise RuntimeError(
+                    'floor.reflective=true requires Genesis RayTracer support '
+                    '(LuisaRenderPy), but it is not available in this Python '
+                    'environment. Install/build Genesis ray tracing support, '
+                    'or set environment.floor.reflective=false in '
+                    'configs/crane_x7/defaults.yaml. The interactive Genesis '
+                    'viewer is rasterized; reflections are visible in rendered '
+                    'camera images only.'
+                ) from exc
+            return gs.renderers.RayTracer()
+        if self.renderer == 'rasterizer':
+            return gs.renderers.Rasterizer()
+        raise ValueError(f'unknown Genesis renderer: {self.renderer!r}')
 
     def gs_init(self):
         import genesis as gs
@@ -73,6 +94,6 @@ class GenesisConfig:
                 ],
             ),
             show_viewer=self.show_viewer,
-            renderer=gs.renderers.Rasterizer(),
+            renderer=self._make_renderer(gs),
         )
         return self.scene

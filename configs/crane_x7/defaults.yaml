@@ -1,0 +1,61 @@
+environment:
+  img_size: 128
+  cube_size: 0.025
+  cube_margin: 0.03
+  success_height: null
+  substeps: 40
+  device: cpu
+  show_viewer: false
+  visualize_camera: false
+  # camera_view choices:
+  #   right: current/default observation view from the manipulator's right side
+  #   left: mirrored view from the manipulator's left side
+  #   front: front view centered on the manipulator
+  camera_view: right
+
+  camera_views:
+    right:
+      pos: [1.0, 1.0, 0.10]
+      lookat: [0.200, 0.0, 0.10]
+      fov: 30.0
+    left:
+      pos: [1.0, -1.0, 0.10]
+      lookat: [0.200, 0.0, 0.10]
+      fov: 30.0
+    front:
+      pos: [1.0, 0.0, 0.10]
+      lookat: [0.200, 0.0, 0.10]
+      fov: 30.0
+
+  floor:
+    # true uses Genesis RayTracer/LuisaRenderPy for observation images;
+    # the interactive viewer is still rasterized.
+    reflective: false
+
+robot:
+  gripper_open: 0.9
+  gripper_close: 0.0
+  gripper_force_limit: 0.9
+  gripper_kp: 2.75
+  gripper_kv: 0.275
+  arm_kp: [3520, 3520, 2640, 2640, 1760, 1760, 1760]
+  arm_kv: [352, 352, 264, 264, 176, 176, 176]
+  max_ik_joint_step: 0.10
+  max_gripper_joint_step: 0.05
+
+collection:
+  repo_id: local/crane_x7_lift
+  num_episodes: 60
+  max_steps: 300
+  img_size: 128
+  seed: 0
+  show_viewer: true
+  visualize_camera: true
+  # Must be one of environment.camera_views: right, left, front.
+  camera_view: right
+  z_grasp: null
+  grasp_ee_clearance: 0.065
+  z_lift: 0.28
+  settle_steps: 20
+  keep_failures: false
+  max_attempts_factor: 3

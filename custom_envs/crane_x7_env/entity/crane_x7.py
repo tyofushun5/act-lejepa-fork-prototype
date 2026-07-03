@@ -23,6 +23,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
+from ..defaults import get_robot_defaults
 from .entity import Entity
 from .workspace import Workspace
 
@@ -50,17 +51,29 @@ INIT_QPOS = np.array([0.0, np.pi / 8, 0.0, -np.pi * 5 / 8, 0.0, -np.pi / 2, 0.0,
 # Top-down end-effector orientation for IK (wxyz).
 EE_DOWN_QUAT = np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float64)
 
-GRIPPER_OPEN = 0.9    # rad; positive = fingers spread (URDF upper limit 1.571)
+_ROBOT_DEFAULTS = get_robot_defaults()
+
+
+def _array_default(name, fallback, size):
+    values = np.asarray(_ROBOT_DEFAULTS.get(name, fallback), dtype=np.float64).reshape(-1)
+    if values.shape != (size,):
+        raise ValueError(f'robot.{name} must contain {size} values, got {values.shape[0]}')
+    return values
+
+
+GRIPPER_OPEN = float(_ROBOT_DEFAULTS.get('gripper_open', 0.9))  # positive = open
 # Stop at contact instead of commanding the URDF squeeze limit (-0.087), which
 # can drive the fingers visually through the cube during scripted collection.
-GRIPPER_CLOSE = 0.0
-GRIPPER_FORCE_LIMIT = 0.9
-GRIPPER_KP = 2.5
-GRIPPER_KV = 0.25
+GRIPPER_CLOSE = float(_ROBOT_DEFAULTS.get('gripper_close', 0.0))
+GRIPPER_FORCE_LIMIT = float(_ROBOT_DEFAULTS.get('gripper_force_limit', 0.9))
+GRIPPER_KP = float(_ROBOT_DEFAULTS.get('gripper_kp', 2.75))
+GRIPPER_KV = float(_ROBOT_DEFAULTS.get('gripper_kv', 0.275))
+ARM_KP = _array_default('arm_kp', [3520, 3520, 2640, 2640, 1760, 1760, 1760], 7)
+ARM_KV = _array_default('arm_kv', [352, 352, 264, 264, 176, 176, 176], 7)
 
 MAX_JOINT_DELTA_FROM_REST = 1.2  # rad, IK sanity clip (from the reference)
-MAX_IK_JOINT_STEP = 0.10  # rad per control step; smooths scripted IK targets
-MAX_GRIPPER_JOINT_STEP = 0.05  # rad per control step; avoids snapping shut
+MAX_IK_JOINT_STEP = float(_ROBOT_DEFAULTS.get('max_ik_joint_step', 0.10))
+MAX_GRIPPER_JOINT_STEP = float(_ROBOT_DEFAULTS.get('max_gripper_joint_step', 0.05))
 GRIPPER_COLLISION_LINKS = {
     'crane_x7_gripper_base_link',
     'crane_x7_gripper_finger_a_link',
@@ -180,14 +193,14 @@ class CraneX7(Entity):
 
         # Stiffer than the reference gains (800/80): with collision meshes and
         # inertias parsed correctly, those left ~3 cm of gravity sag at the EE.
-        self.entity.set_dofs_kp(np.array(
-            [3200, 3200, 2400, 2400, 1600, 1600, 1600, GRIPPER_KP, GRIPPER_KP],
-            dtype=np.float64,
-        ), self.all_dofs)
-        self.entity.set_dofs_kv(np.array(
-            [320, 320, 240, 240, 160, 160, 160, GRIPPER_KV, GRIPPER_KV],
-            dtype=np.float64,
-        ), self.all_dofs)
+        self.entity.set_dofs_kp(
+            np.concatenate([ARM_KP, [GRIPPER_KP, GRIPPER_KP]]),
+            self.all_dofs,
+        )
+        self.entity.set_dofs_kv(
+            np.concatenate([ARM_KV, [GRIPPER_KV, GRIPPER_KV]]),
+            self.all_dofs,
+        )
         self.entity.set_dofs_force_range(
             np.array(
                 [-87, -87, -87, -87, -12, -12, -12,
