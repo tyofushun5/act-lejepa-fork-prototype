@@ -53,6 +53,7 @@ class CraneX7Env(gym.Env):
         cam_fov=None,
     ):
         super().__init__()
+        self._torch_default_dtype = self._get_torch_default_dtype()
         import genesis as gs
 
         env_defaults = get_env_defaults()
@@ -157,54 +158,67 @@ class CraneX7Env(gym.Env):
             np.concatenate([high[:7], [high[7]]]).astype(np.float32),
             (8,), np.float32,
         )
+        self._restore_torch_default_dtype()
 
     # ------------------------------------------------------------- gym API
 
     def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        self.robot.reset()
+        try:
+            super().reset(seed=seed)
+            self.robot.reset()
 
-        low = self.workspace.workspace_min[:2] + self.cube_margin
-        high = self.workspace.workspace_max[:2] - self.cube_margin
-        xy = self.np_random.uniform(low, high)
-        self.cube.reset(np.array([xy[0], xy[1], self.cube.half + 1e-3]))
+            low = self.workspace.workspace_min[:2] + self.cube_margin
+            high = self.workspace.workspace_max[:2] - self.cube_margin
+            xy = self.np_random.uniform(low, high)
+            self.cube.reset(np.array([xy[0], xy[1], self.cube.half + 1e-3]))
 
-        for _ in range(10):
-            self.scene.step()
+            for _ in range(10):
+                self.scene.step()
 
-        return self._get_obs(), {}
+            return self._get_obs(), {}
+        finally:
+            self._restore_torch_default_dtype()
 
     def step(self, action):
-        action = np.asarray(action, dtype=np.float64).reshape(-1)
-        assert action.shape == (8,), f'expected 8-dim joint action, got {action.shape}'
-        qpos_target = np.empty(9, dtype=np.float64)
-        qpos_target[:7] = action[:7]
-        qpos_target[7] = qpos_target[8] = action[7]  # mirror gripper fingers
-        self.robot.control_qpos(qpos_target)
+        try:
+            action = np.asarray(action, dtype=np.float64).reshape(-1)
+            assert action.shape == (8,), f'expected 8-dim joint action, got {action.shape}'
+            qpos_target = np.empty(9, dtype=np.float64)
+            qpos_target[:7] = action[:7]
+            qpos_target[7] = qpos_target[8] = action[7]  # mirror gripper fingers
+            self.robot.control_qpos(qpos_target)
 
-        for _ in range(self.substeps):
-            self.scene.step()
+            for _ in range(self.substeps):
+                self.scene.step()
 
-        cube_pos = self.cube.get_pos()
-        success = bool(cube_pos[2] >= self.success_height)
-        reward = float(success)
-        terminated = success
-        truncated = False  # TimeLimit wrapper handles episode truncation
-        info = {'success': success, 'cube_height': float(cube_pos[2])}
-        return self._get_obs(), reward, terminated, truncated, info
+            cube_pos = self.cube.get_pos()
+            success = bool(cube_pos[2] >= self.success_height)
+            reward = float(success)
+            terminated = success
+            truncated = False  # TimeLimit wrapper handles episode truncation
+            info = {'success': success, 'cube_height': float(cube_pos[2])}
+            return self._get_obs(), reward, terminated, truncated, info
+        finally:
+            self._restore_torch_default_dtype()
 
     def render(self):
-        return self.camera.get_image()
+        try:
+            return self.camera.get_image()
+        finally:
+            self._restore_torch_default_dtype()
 
     def close(self):
-        pass
+        self._restore_torch_default_dtype()
 
     # ------------------------------------------------------------- helpers
 
     def settle(self, steps):
-        for _ in range(int(steps)):
-            self.scene.step()
-        return self._get_obs()
+        try:
+            for _ in range(int(steps)):
+                self.scene.step()
+            return self._get_obs()
+        finally:
+            self._restore_torch_default_dtype()
 
     def _get_obs(self):
         return {
@@ -223,6 +237,15 @@ class CraneX7Env(gym.Env):
 
     def solve_ik_action(self, target_pos, gripper):
         return self.robot.solve_ik(target_pos, gripper)
+
+    @staticmethod
+    def _get_torch_default_dtype():
+        import torch
+        return torch.get_default_dtype()
+
+    def _restore_torch_default_dtype(self):
+        import torch
+        torch.set_default_dtype(self._torch_default_dtype)
 
 
 def make_crane_x7_env(
