@@ -39,6 +39,41 @@ def _get_wandb_videos(evaluator, dataset, video_prefix):
     return videos
 
 
+def _get_view_comparison_logs(evaluator, prefix):
+    view_infos = getattr(evaluator, 'get_camera_view_infos', lambda: {})()
+    if len(view_infos) < 2:
+        return {}
+
+    import wandb
+
+    metrics = ['solved %', 'sum_reward', 'steps']
+    log_data = {}
+    view_order = [str(view) for view in evaluator.config.env.get('eval_camera_views', [])]
+    view_order = [view for view in view_order if view in view_infos]
+
+    for metric in metrics:
+        rows = []
+        for view in view_order:
+            value = view_infos[view].get(metric)
+            if value is None:
+                continue
+
+            value = float(value)
+            rows.append([view, value])
+            log_data[f'{prefix}/camera views/{metric}/{view}'] = value
+
+        if len(rows) >= 2:
+            table = wandb.Table(data=rows, columns=['camera_view', metric])
+            log_data[f'{prefix}/camera view comparison/{metric}'] = wandb.plot.bar(
+                table,
+                'camera_view',
+                metric,
+                title=f'Eval {metric} by camera view',
+            )
+
+    return log_data
+
+
 def _log_to_wandb(args, config, dataset, info, evaluator):
     import wandb
 
@@ -51,6 +86,7 @@ def _log_to_wandb(args, config, dataset, info, evaluator):
     )
 
     log_data = _add_key_prefix(info, args.wandb_prefix)
+    log_data |= _get_view_comparison_logs(evaluator, args.wandb_prefix)
     if args.wandb_video:
         video_prefix = args.wandb_video_prefix or args.wandb_prefix or config.app
         log_data |= _get_wandb_videos(evaluator, dataset, video_prefix)

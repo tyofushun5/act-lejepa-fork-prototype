@@ -14,8 +14,8 @@ training_arguments:
   weight_decay: 0.1
 
   # dataloader
-  per_device_train_batch_size: 64
-  per_device_eval_batch_size: 64
+  per_device_train_batch_size: 32
+  per_device_eval_batch_size: 32
   dataloader_num_workers: 16
   dataloader_drop_last: true
 
@@ -120,6 +120,11 @@ env:
 
   env_names:
     - lift-cube
+
+  eval_camera_views:
+    - right
+    - left
+    - front
 
 state_predictor: !inc state_predictor.yaml
 state_predictor_every_n_steps: 1000

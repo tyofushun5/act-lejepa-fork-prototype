@@ -13,6 +13,7 @@ class AgentEvaluatorCallback(TrainerCallback):
         self.rollout_delay = config.env.get('rollout_delay', 0)
         self.metric_key = 'Rollout/solved %'
         self.info = {} # will be populated
+        self.view_comparison_history = {}
 
         self.trainer = trainer
         policy = trainer.model
@@ -42,7 +43,8 @@ class AgentEvaluatorCallback(TrainerCallback):
         # Log to wandb        
         if 'wandb' in args.report_to:
             wandb_videos = self.get_wandb_videos(dataset)
-            wandb.log((info | wandb_videos), step=state.global_step)
+            wandb_view_comparison = self.get_wandb_view_comparison(state.global_step)
+            wandb.log((info | wandb_videos | wandb_view_comparison), step=state.global_step)
         
         # self.save_dataset_to_disk(dataset)
         self.info = info
@@ -65,6 +67,45 @@ class AgentEvaluatorCallback(TrainerCallback):
             if video is not None:
                 videos[f'Rollout videos/{env_name}'] = video
         return videos
+
+    def get_wandb_view_comparison(self, step):
+        '''Create comparable W&B scalars and charts for camera-view rollouts.'''
+        view_infos = getattr(self.evaluator, 'get_camera_view_infos', lambda: {})()
+        if len(view_infos) < 2:
+            return {}
+
+        metrics = ['solved %', 'sum_reward', 'steps']
+        view_order = [str(view) for view in self.evaluator.config.env.get('eval_camera_views', [])]
+        view_order = [view for view in view_order if view in view_infos]
+        log_data = {}
+
+        for metric in metrics:
+            values = []
+            for view in view_order:
+                value = view_infos[view].get(metric)
+                if value is None:
+                    break
+                value = float(value)
+                values.append(value)
+                log_data[f'Rollout camera views/{metric}/{view}'] = value
+            else:
+                history = self.view_comparison_history.setdefault(
+                    metric,
+                    {'steps': [], 'values': {view: [] for view in view_order}},
+                )
+                history['steps'].append(step)
+                for view, value in zip(view_order, values):
+                    history['values'].setdefault(view, []).append(value)
+
+                log_data[f'Rollout camera view comparison/{metric}'] = wandb.plot.line_series(
+                    xs=history['steps'],
+                    ys=[history['values'][view] for view in view_order],
+                    keys=view_order,
+                    title=f'Rollout {metric} by camera view',
+                    xname='trainer_step',
+                )
+
+        return log_data
 
     def get_wandb_video(self, dataset, name):
         '''Create and return a wandb video for logging.'''

@@ -63,9 +63,9 @@ trap cleanup EXIT
 make_crane_eval_config() {
   local base_config="$1"
   local out_config="$2"
-  local camera_view="$3"
+  local camera_views="$3"
 
-  "${PYTHON_BIN}" - "$base_config" "$out_config" "$camera_view" \
+  "${PYTHON_BIN}" - "$base_config" "$out_config" "$camera_views" \
     "${EVAL_NUM_EPISODES:-${NUM_EPISODES:-}}" \
     "${EVAL_MAX_EPISODE_STEPS:-${MAX_EPISODE_STEPS:-}}" \
     "${SHOW_VIEWER:-0}" \
@@ -76,7 +76,7 @@ import yaml
 
 base_config = Path(sys.argv[1]).resolve()
 out_config = Path(sys.argv[2]).resolve()
-camera_view = sys.argv[3]
+camera_views = sys.argv[3]
 num_episodes = sys.argv[4]
 max_episode_steps = sys.argv[5]
 show_viewer = sys.argv[6]
@@ -85,6 +85,10 @@ show_cameras = sys.argv[7]
 
 def as_bool(value):
     return str(value).lower() not in {"", "0", "false", "no", "off"}
+
+
+def parse_views(value):
+    return [view for view in str(value).replace(",", " ").split() if view]
 
 
 def make_loader(base_dir):
@@ -107,7 +111,10 @@ with base_config.open("r") as f:
 
 env = config.setdefault("env", {})
 env_kwargs = env.setdefault("env_kwargs", {})
-env_kwargs["camera_view"] = camera_view
+views = parse_views(camera_views)
+if views:
+    env["eval_camera_views"] = views
+    env_kwargs.pop("camera_view", None)
 env_kwargs["show_viewer"] = as_bool(show_viewer)
 
 if show_cameras != "":
@@ -156,17 +163,10 @@ run_crane_evaluation() {
   # CRANE-X7 defaults to the training view plus two held-out camera presets.
   # Override with CAMERA_VIEWS=left,front or CAMERA_VIEW=left.
   views_string="${CAMERA_VIEWS:-${CAMERA_VIEW:-right,left,front}}"
-  views_string="${views_string//,/ }"
-  read -r -a views <<< "${views_string}"
-
-  for view in "${views[@]}"; do
-    [[ -z "${view}" ]] && continue
-
-    tmp_config="$(mktemp "/tmp/act-jepa-crane-x7-${view}.XXXXXX.yaml")"
-    tmp_configs+=("${tmp_config}")
-    make_crane_eval_config "${cfg}" "${tmp_config}" "${view}"
-    run_evaluation "${tmp_config}" "${cfg} camera_view=${view}" "${model}/${view}" "${view}"
-  done
+  tmp_config="$(mktemp "/tmp/act-jepa-crane-x7-views.XXXXXX.yaml")"
+  tmp_configs+=("${tmp_config}")
+  make_crane_eval_config "${cfg}" "${tmp_config}" "${views_string}"
+  run_evaluation "${tmp_config}" "${cfg} camera_views=${views_string}" "${model}/views" "views=${views_string}"
 }
 
 for model in "${models[@]}"; do
