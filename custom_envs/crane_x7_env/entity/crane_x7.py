@@ -1,7 +1,6 @@
 '''CRANE-X7 robot entity.
 
-Ported from `samples/adrobo-CRANE-X7-main/simulation/entity/crane_x7.py` with
-the following fixes:
+Ported from the adrobo CRANE-X7 reference simulation with the following fixes:
 
 - URDF `package://crane_x7_description/` URIs are resolved to absolute paths
   before loading. Genesis' strict URDF parser cannot resolve `package://`
@@ -17,7 +16,9 @@ the following fixes:
 - Absolute joint-position control API (used both by the scripted expert and
   by policies at rollout time) instead of the reference's Discrete(8) deltas.
 '''
+import hashlib
 import os
+import tempfile
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -27,8 +28,8 @@ from ..defaults import get_robot_defaults
 from .entity import Entity
 from .workspace import Workspace
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_URDF = _REPO_ROOT / 'samples/adrobo-CRANE-X7-main/crane_x7_description/urdf/crane_x7.urdf'
+_ASSET_ROOT = Path(__file__).resolve().parents[1] / 'assets'
+_DEFAULT_URDF = _ASSET_ROOT / 'crane_x7_description/urdf/crane_x7.urdf'
 
 ARM_JOINT_NAMES = [
     'crane_x7_shoulder_fixed_part_pan_joint',
@@ -79,7 +80,7 @@ GRIPPER_VISUAL_COLLISION_MESHES = {
 def resolve_urdf(urdf_path=None) -> str:
     '''Rewrite `package://crane_x7_description/` URIs to absolute paths.
 
-    The resolved copy is cached next to the original URDF so Genesis' strict
+    The resolved copy is cached outside the source tree so Genesis' strict URDF
     parser (which loads collision meshes correctly) can be used. Only the
     gripper collision meshes are swapped to their visual mesh counterparts so
     contact around the cube matches what is displayed without making the whole
@@ -88,8 +89,9 @@ def resolve_urdf(urdf_path=None) -> str:
     urdf_path = Path(urdf_path or os.environ.get('CRANE_X7_URDF') or _DEFAULT_URDF)
     if not urdf_path.exists():
         raise FileNotFoundError(
-            f'CRANE-X7 URDF not found: {urdf_path}. Fetch the crane_x7_description '
-            'submodule under samples/adrobo-CRANE-X7-main or set CRANE_X7_URDF.'
+            f'CRANE-X7 URDF not found: {urdf_path}. Set CRANE_X7_URDF to a '
+            'crane_x7_description/urdf/crane_x7.urdf path, or restore the '
+            'repo asset under custom_envs/crane_x7_env/assets.'
         )
     pkg_uri = 'package://crane_x7_description/'
     description_root = urdf_path.parent.parent
@@ -118,7 +120,17 @@ def resolve_urdf(urdf_path=None) -> str:
             mesh.set('filename', filename.replace(pkg_uri, f'{description_root.as_posix()}/', 1))
 
     resolved_text = ET.tostring(root, encoding='unicode')
-    resolved_path = urdf_path.with_name(urdf_path.stem + '_resolved_gripper_only_high_precision.urdf')
+    digest = hashlib.sha256(
+        f'{urdf_path.resolve()}\0{resolved_text}'.encode('utf-8')
+    ).hexdigest()[:16]
+    resolved_dir = Path(
+        os.environ.get(
+            'CRANE_X7_RESOLVED_URDF_DIR',
+            Path(tempfile.gettempdir()) / 'act-jepa-crane-x7',
+        )
+    )
+    resolved_dir.mkdir(parents=True, exist_ok=True)
+    resolved_path = resolved_dir / f'{urdf_path.stem}_resolved_gripper_only_high_precision_{digest}.urdf'
     if not resolved_path.exists() or resolved_path.read_text() != resolved_text:
         resolved_path.write_text(resolved_text)
     return str(resolved_path)

@@ -1,7 +1,7 @@
 '''Genesis initialization / scene construction for the CRANE-X7 environment.
 
-Modeled after `samples/adrobo-CRANE-X7-main/simulation/config/genesis_init.py`
-with fixes for the current Genesis API:
+Modeled after the adrobo CRANE-X7 reference simulation with fixes for the
+current Genesis API:
 - `contact_resolve_time` is deprecated -> `constraint_timeconst`
 - genesis is imported lazily so `import custom_envs` works without it
 '''

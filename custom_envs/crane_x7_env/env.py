@@ -1,6 +1,6 @@
 '''CRANE-X7 cube-lift environment (Genesis) in this repo's gymnasium convention.
 
-Structure follows `samples/adrobo-CRANE-X7-main/simulation`, with entities and
+Structure follows the adrobo CRANE-X7 reference simulation, with entities and
 Genesis setup in `custom_envs/crane_x7_env/{entity,config}`. Differences from
 that reference (which targets DreamerV2):
 

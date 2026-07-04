@@ -1,7 +1,6 @@
 '''CRANE-X7 (Genesis) environment package.
 
-Layout mirrors the reference implementation under
-`samples/adrobo-CRANE-X7-main/simulation`:
+Layout mirrors the adrobo CRANE-X7 reference simulation:
 
 - `config.py`  Genesis initialization / scene options
 - `entity/`    robot, cube, camera, workspace entities
