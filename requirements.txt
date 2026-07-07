@@ -3,6 +3,7 @@ robosuite==1.5.1
 metaworld
 git+https://github.com/elasticdotventures/gym-pusht.git@fix/pymunk7-compatibility # for gym-pusht
 mani_skill
+genesis-world
 
 rerun-sdk[notebook]
 jupyter
