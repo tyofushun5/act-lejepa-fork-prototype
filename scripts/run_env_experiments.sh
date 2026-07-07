@@ -54,9 +54,13 @@ fi
 
 tmp_configs=()
 cleanup() {
-  for cfg in "${tmp_configs[@]:-}"; do
-    [[ -f "${cfg}" ]] && rm -f "${cfg}"
+  local cfg
+  for cfg in "${tmp_configs[@]}"; do
+    if [[ -f "${cfg}" ]]; then
+      rm -f "${cfg}"
+    fi
   done
+  return 0
 }
 trap cleanup EXIT
 
