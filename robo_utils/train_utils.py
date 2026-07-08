@@ -85,14 +85,16 @@ def get_dataloaders(config: Config):
     return train_loader, test_loader
 
 class ImageProcessor:
-    def __init__(self, img_size: int):
+    def __init__(self, img_size: int, normalize: str | None = None):
         from torchvision.transforms import v2
         self.resize = v2.Resize(img_size)
+        self.normalize = normalize
     
     def __call__(self, x: torch.Tensor):
         x = self.scale_image(x)
         x = self.to_channel_first(x)
         x = self.resize(x)
+        x = self.normalize_image(x)
         return x
     
     def scale_image(self, x: torch.Tensor):
@@ -100,6 +102,15 @@ class ImageProcessor:
         x = x.to(dtype=torch.float32)
         x  = x if is_float_input else x.div_(255.)
         return x
+
+    def normalize_image(self, x: torch.Tensor):
+        if self.normalize is None:
+            return x
+        if self.normalize != 'imagenet':
+            raise ValueError(f'Unknown image normalization: {self.normalize!r}')
+        mean = x.new_tensor([0.485, 0.456, 0.406]).view((1,) * (x.ndim - 3) + (3, 1, 1))
+        std = x.new_tensor([0.229, 0.224, 0.225]).view((1,) * (x.ndim - 3) + (3, 1, 1))
+        return (x - mean) / std
 
     @classmethod
     def to_channel_first(cls, x: torch.Tensor):
@@ -116,7 +127,9 @@ class ImageProcessor:
 class DefaultProcessor:
     '''Processes dataset features - process images and normalize features.'''
     def __init__(self, config: Config, metadata: Metadata):
-        self.image_transform = ImageProcessor(config.env.env_kwargs.img_size)
+        image_processor_config = config.get('image_processor', {})
+        image_normalize = image_processor_config.get('normalize') if image_processor_config else None
+        self.image_transform = ImageProcessor(config.env.env_kwargs.img_size, normalize=image_normalize)
 
         self.normalize_keys = config.get('normalize_keys', [])
         if self.normalize_keys:
@@ -242,4 +255,3 @@ def make_deterministic():
     if platform.system() == "Linux":
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # or ":16:8"
         torch.use_deterministic_algorithms(True)
-

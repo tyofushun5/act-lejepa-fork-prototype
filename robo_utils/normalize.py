@@ -47,7 +47,8 @@ class StatsNormalize(nn.Module):
         for key in batch:
             if key not in self.keys: continue
             x = batch[key]
-            if not isinstance(x, torch.Tensor): torch.as_tensor(x, dtype=torch.float32)
+            if not isinstance(x, torch.Tensor):
+                x = torch.as_tensor(x, dtype=torch.float32)
             stats = self.get_stats(key, x.device)
 
             if self.normalize_type == 'mean_std':

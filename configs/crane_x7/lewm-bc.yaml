@@ -1,0 +1,142 @@
+app: lewm-bc crane_x7
+
+# --------------------- Training ---------------------
+training_arguments:
+  # seed
+  seed: 42
+  max_steps: 6000
+
+  # optimization
+  optim: adamw_torch
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.04
+  learning_rate: 5.0e-5
+  weight_decay: 1.0e-3
+
+  # dataloader
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  dataloader_num_workers: 16
+  dataloader_drop_last: true
+
+  # log training
+  logging_strategy: steps
+  logging_steps: 50
+  logging_first_step: true
+  log_on_each_node: false
+
+  # eval_strategy: steps
+  # eval_steps: 0.25
+  # eval_delay: 1 # skip eval at the beginning
+
+  save_strategy: steps
+  save_steps: 500 # save every n steps (and the last step)
+
+  # other
+  gradient_accumulation_steps: 32
+  full_determinism: true
+  report_to: ['wandb']
+
+normalize_keys: ['action', 'observation.state']
+
+image_processor:
+  normalize: imagenet
+
+callbacks: ['AgentEvaluatorCallback', 'LogAuxiliaryLossCallback']
+
+# --------------------- Features ---------------------
+feature_config: &horizon
+  # LeWM objective uses a short observation/action window:
+  # history_size=3 predicts the next 3 embeddings with num_preds=1.
+  observation.image: 4
+  observation.state: 4
+  episode_index: 1
+  task_index: 1
+  action: 30
+
+
+# --------------------- Policy model ---------------------
+model:
+  policy_name: ActionChunkingPolicy
+  class_name: LeWmBcModel
+  horizon: *horizon
+  history_size: 3
+  num_preds: 1
+  embed_dim: 192
+
+  encoder: &encoder_params
+    image_size: 224
+    patch_size: 14
+    hidden_size: 192
+    intermediate_size: 768
+    num_hidden_layers: 12
+    num_attention_heads: 3
+    hidden_act: gelu
+    attention_dropout: 0.0
+    hidden_dropout_prob: 0.0
+    attention_probs_dropout_prob: 0.0
+
+  action_encoder:
+    smoothed_dim: 8
+    mlp_scale: 4
+
+  predictor:
+    hidden_size: 192
+    output_dim: 192
+    intermediate_size: 2048
+    num_hidden_layers: 6
+    num_attention_heads: 16
+    dim_head: 64
+    attention_dropout: 0.1
+    emb_dropout: 0.0
+
+  projector:
+    hidden_size: 2048
+    norm: batch_norm
+
+  pred_proj:
+    hidden_size: 2048
+    norm: batch_norm
+
+  decoder:
+    <<: *encoder_params
+    num_hidden_layers: 1
+    causal: false
+
+  sigreg:
+    weight: 0.09
+    knots: 17
+    num_proj: 1024
+
+  loss_weights:
+    action: 1.0
+    pred: 1.0
+
+# --------------------- CRANE-X7 settings ---------------------
+dataset:
+  repo_ids:
+    - local/crane_x7_lift
+  revision: 'main'
+  use_videos: True
+  train_episodes_range: [0, 50]
+  test_episodes_range: [50, 60]
+
+env:
+  rollout_steps: 1000
+  rollout_delay: 1 # skip rollout at the beginning
+
+  num_episodes: 20
+  seed: 1000
+
+  env_kwargs:
+    id: CraneX7-v0
+    img_size: 224
+    max_episode_steps: 300
+
+  env_names:
+    - lift-cube
+
+  eval_camera_views:
+    - right
+    - left
+    - front
