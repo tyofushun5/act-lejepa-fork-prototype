@@ -14,8 +14,8 @@ training_arguments:
   weight_decay: 1.0e-3
 
   # dataloader
-  per_device_train_batch_size: 4
-  per_device_eval_batch_size: 4
+  per_device_train_batch_size: 128
+  per_device_eval_batch_size: 128
   dataloader_num_workers: 16
   dataloader_drop_last: true
 
@@ -33,7 +33,7 @@ training_arguments:
   save_steps: 500 # save every n steps (and the last step)
 
   # other
-  gradient_accumulation_steps: 32
+  gradient_accumulation_steps: 1
   full_determinism: true
   report_to: ['wandb']
 
