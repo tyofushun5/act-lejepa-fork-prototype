@@ -14,8 +14,8 @@ training_arguments:
   weight_decay: 0.1
 
   # dataloader
-  per_device_train_batch_size: 64
-  per_device_eval_batch_size: 64
+  per_device_train_batch_size: 128
+  per_device_eval_batch_size: 128
   dataloader_num_workers: 16
   dataloader_drop_last: true
 
@@ -30,7 +30,7 @@ training_arguments:
   # eval_delay: 1 # skip eval at the beginning
 
   save_strategy: steps
-  save_steps: 1000 # save every n steps (and the last step)
+  save_steps: 500 # save every n steps (and the last step)
 
   # other
   gradient_accumulation_steps: 1
@@ -54,7 +54,6 @@ feature_config: &horizon
 model:
   policy_name: ActionChunkingPolicy
   class_name: ActJepaModel
-  target_update: ema
   horizon: *horizon
 
   encoder: &common_params
@@ -81,18 +80,6 @@ model:
     hidden_size: 128
     intermediate_size: 512
     causal: false
-
-  sigreg:
-    weight: 0.0
-    knots: 17
-    num_proj: 1024
-
-  loss_weights:
-    action: 1.0
-    jepa: 1.0
-    abstract: 1.0
-    target_sigreg: 0.0
-    context_sigreg: 0.0
 
 ema_start: 0.996
 ema_end: 1.0

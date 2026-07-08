@@ -31,7 +31,7 @@ training_arguments:
   # eval_delay: 1 # skip eval at the beginning
 
   save_strategy: steps
-  # save_steps: 1000 # save every n steps (and the last step)
+  save_steps: 500 # save every n steps (and the last step)
 
   # other
   gradient_accumulation_steps: 1
