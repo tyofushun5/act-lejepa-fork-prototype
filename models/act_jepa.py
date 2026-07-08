@@ -38,7 +38,6 @@ class ActJepaConfig(PretrainedConfig):
         self.horizon = horizon
         super().__init__(**kwargs)
 
-
 ########################## ACT-JEPA Model ##########################
 
 class ContextEncoder(ActEncoder):
@@ -205,7 +204,7 @@ class Jepa(PreTrainedModel):
             self.abstract_loss = loss
             output['loss'] = loss
             output['abstract_loss'] = loss
-
+        
         return ModelOutput(output)
 
     def loss_function(self, abstract_pred, abstract_labels, **kwargs):
@@ -216,7 +215,7 @@ class Jepa(PreTrainedModel):
         abstract_pred = abstract_pred[~is_pad]
         abstract_labels = abstract_labels[~is_pad]
         return F.l1_loss(abstract_pred, abstract_labels)
-
+    
     @torch.no_grad()
     def update_target_encoder(self, m: float):
         '''
@@ -224,17 +223,11 @@ class Jepa(PreTrainedModel):
         The target encoder slowly follows the context encoder.
         '''
         assert 0 <= m <= 1, f'EMA momentum is not in the valid range [0, 1] {m=}'
-        # NOTE: as m approaches 1.0 (later stage of training), the target encoder
+        # NOTE: as m approaches 1.0 (later stage of training), the target encoder 
         # updates become extremely slow, almost freezing its parameters.
         for (name_c, param_c), (name_t, param_t) in zip(self.context_encoder.named_parameters(), self.target_encoder.named_parameters()):
             assert name_c == name_t, f'params names must be equal: {name_c=}, {name_t=}'
             param_t.data.mul_(m).add_((1.0 - m) * param_c.data)
-
-    @torch.no_grad()
-    def copy_context_to_target_encoder(self):
-        self.target_encoder.load_state_dict(self.context_encoder.state_dict())
-        self.target_encoder.eval()
-        self.target_encoder.requires_grad_(False)
 
 
 class ActJepaModel(PreTrainedModel):
@@ -252,13 +245,13 @@ class ActJepaModel(PreTrainedModel):
 
         self.abstract_loss = 0.
         self.reconstruction_loss = 0.
-
+    
     def forward(self, return_loss=True, **inputs):
         output = self.jepa.forward(return_loss, **inputs)
         encoder_hidden_states = output.encoder_hidden_states # (B Te C)
         decoder_hidden_states = self.decoder(encoder_hidden_states, **inputs) # (B action_chunk_size C)
         # pass through the action head
-        action_pred = self.action_head(decoder_hidden_states) # (B action_chunk_size C)
+        action_pred = self.action_head(decoder_hidden_states) # (B action_chunk_size C)        
         output['action_pred'] = action_pred
 
         # calculate loss
@@ -273,7 +266,7 @@ class ActJepaModel(PreTrainedModel):
             output['loss'] = loss
 
         return output
-
+    
     def reconstruction_loss_function(self, action_pred, labels, action_is_pad, **kwargs):
         '''Compute action reconstruction loss in the action space.'''
         assert action_pred.shape == labels.shape
@@ -282,23 +275,18 @@ class ActJepaModel(PreTrainedModel):
         action_pred = action_pred[~action_is_pad]
         labels = labels[~action_is_pad]
         return F.l1_loss(action_pred, labels)
-
+    
     def loss_function(self, reconstruction_loss, abstract_loss):
         '''The total loss is calculated as action reconstruction loss + abstract loss.'''
         return reconstruction_loss + abstract_loss
-
+    
     @torch.no_grad()
     def update_target_encoder(self, m: float):
         return self.jepa.update_target_encoder(m)
-
-    @torch.no_grad()
-    def copy_context_to_target_encoder(self):
-        return self.jepa.copy_context_to_target_encoder()
-
+    
     @property
     def encoder(self):
         return self.jepa.context_encoder
-
 
 def get_1d_sincos_pos_emb(seq_len, hidden_size):
     '''Returns a [seq_len, hidden_size] tensor of sinusoidal positional embeddings.
