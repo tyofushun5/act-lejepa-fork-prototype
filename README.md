@@ -21,7 +21,7 @@ configs/           Training configs grouped by environment and model.
 custom_envs/       Gymnasium wrappers and custom environment registration.
 models/            ACT-JEPA, ACT, autoregressive transformer, and probes.
 robo_utils/        Dataset, rollout, callback, and utility code.
-scripts/           Training entry points.
+scripts/           Training, evaluation, data-collection, and experiment runners.
 transformer_utils/ Transformer layers shared by the models.
 ```
 ## Installation
@@ -73,6 +73,15 @@ For example, to train the baseline ACT-JEPA policy on Push-T use this:
 python -m scripts.train --config_path configs/pusht/act-jepa.yaml
 ```
 
+For CRANE-X7, train a single config the same way:
+
+```bash
+python -m scripts.train --config_path configs/crane_x7/act.yaml
+python -m scripts.train --config_path configs/crane_x7/act-jepa.yaml
+python -m scripts.train --config_path configs/crane_x7/act-lejepa.yaml
+python -m scripts.train --config_path configs/crane_x7/lewm-bc.yaml
+```
+
 To train the ACT-LEJEPA comparison variant on Push-T use this:
 
 ```bash
@@ -90,9 +99,68 @@ only. SIGReg projection settings live under `model.sigreg`; loss scaling lives
 under `model.loss_weights`, including `action`, `jepa`, `abstract`,
 `target_sigreg`, and `context_sigreg`.
 
-Available environments are `pusht`, `metaworld`, and `mani_skill`. Available
-model configs include `act`, `act-jepa`, `act-lejepa`, `ar_transformer`,
-`state_predictor`, and `action_predictor`.
+Available environments are `pusht`, `metaworld`, `mani_skill`, and `crane_x7`.
+Available model configs include `act`, `act-jepa`, `act-lejepa`,
+`ar_transformer`, `state_predictor`, `action_predictor`, and CRANE-X7's
+`lewm-bc`.
+
+## Experiment Runners
+
+The shell runners wrap `scripts.train` and `scripts.evaluate` for repeated
+experiments. By default, `MODELS` is `act act-jepa act-lejepa`.
+
+Run all default models for one environment:
+
+```bash
+scripts/run_pusht_experiments.sh
+scripts/run_metaworld_experiments.sh
+scripts/run_mani_skill_experiments.sh
+scripts/run_crane_x7_experiments.sh
+```
+
+Run only selected models:
+
+```bash
+MODELS="act act-jepa" scripts/run_pusht_experiments.sh
+MODELS=lewm-bc scripts/run_crane_x7_experiments.sh
+```
+
+Run every environment in sequence:
+
+```bash
+scripts/run_all_experiments.sh
+```
+
+Useful environment variables:
+
+```bash
+# train only, no standalone evaluation after training
+RUN_EVAL=0 MODELS=lewm-bc scripts/run_crane_x7_experiments.sh
+
+# evaluate only
+RUN_TRAIN=0 RUN_EVAL=1 MODELS=act-jepa scripts/run_crane_x7_experiments.sh
+
+# CRANE-X7 camera-view evaluation
+RUN_TRAIN=0 RUN_EVAL=1 CAMERA_VIEWS=right,left,front \
+  MODELS=act-jepa scripts/run_crane_x7_experiments.sh
+```
+
+`scripts/run_crane_x7_experiments.sh` defaults `RUN_EVAL=0`, because CRANE-X7
+rollouts are more expensive than the other environments. Set `RUN_EVAL=1` when
+you want the extra rollout pass.
+
+For low-VRAM `lewm-bc` runs, use a small per-device batch and gradient
+accumulation, for example:
+
+```yaml
+training_arguments:
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 32
+```
+
+This keeps the effective train batch at `4 * 32 = 128`, but uses much less VRAM
+than `per_device_train_batch_size: 128`.
 
 ## Probe Training
 
@@ -173,6 +241,66 @@ dataset:
   train_episodes_range: [0, 100]
   test_episodes_range: [100, 120]
 ```
+
+### CRANE-X7 Data Collection
+
+CRANE-X7 demonstrations are collected locally with the scripted expert in
+`scripts/collect_crane_x7_data.py`. The defaults live in
+`configs/crane_x7/defaults.yaml`.
+
+```bash
+scripts/collect_crane_x7_data.sh
+```
+
+The default collection config saves successful episodes to
+`local/crane_x7_lift`:
+
+```yaml
+collection:
+  repo_id: local/crane_x7_lift
+  num_episodes: 60
+  max_steps: 300
+  keep_failures: false
+  max_attempts_factor: 3
+```
+
+With the default `num_episodes: 60`, the training configs use:
+
+```yaml
+dataset:
+  repo_ids:
+    - local/crane_x7_lift
+  train_episodes_range: [0, 50]
+  test_episodes_range: [50, 60]
+```
+
+To collect more data without editing the defaults file, pass environment
+variables to the shell wrapper:
+
+```bash
+NUM_EPISODES=120 scripts/collect_crane_x7_data.sh
+```
+
+After collecting 120 episodes, update each CRANE-X7 training config to use the
+new split:
+
+```yaml
+train_episodes_range: [0, 100]
+test_episodes_range: [100, 120]
+```
+
+Other useful collection overrides:
+
+```bash
+REPO_ID=local/crane_x7_lift_v2 NUM_EPISODES=120 scripts/collect_crane_x7_data.sh
+CAMERA_VIEW=front scripts/collect_crane_x7_data.sh
+SHOW_VIEWER=1 scripts/collect_crane_x7_data.sh
+KEEP_FAILURES=1 scripts/collect_crane_x7_data.sh
+```
+
+The script retries failed attempts when `keep_failures` is false, up to
+`num_episodes * max_attempts_factor`. At the end it prints the saved episode
+count, frame count, and the suggested train/test episode ranges.
 
 
 ## Citation
