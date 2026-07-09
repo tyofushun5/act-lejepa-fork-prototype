@@ -1,14 +1,14 @@
 environment:
   img_size: 128
-  cube_size: 0.025
-  cube_color: [0.25, 0.25, 0.25]
+  cube_size: 0.030
+  cube_color: [1.0, 1.0, 0.0]
   cube_friction: 2.0
   cube_margin: 0.03
   success_height: null
   dt: 0.0025
   substeps: 40
   device: cpu
-  show_viewer: false
+  show_viewer: true
   # Genesis VisOptions.show_cameras; draws camera bodies/frustums in the viewer.
   show_cameras: false
   # Genesis VisOptions.plane_reflection; works with the rasterized viewer/cameras.
@@ -67,7 +67,7 @@ robot:
 
 collection:
   repo_id: local/crane_x7_lift
-  num_episodes: 60
+  num_episodes: 120
   max_steps: 300
   seed: 0
   z_hover: 0.20

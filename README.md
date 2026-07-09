@@ -94,10 +94,10 @@ encoder behavior: no gradient through the target encoder, with
 with `model.target_update: grad`, following the LeJEPA reference design
 (`samples/le-wm-main`): the gradient-trained target encoder embeds each state
 independently (no cross-timestep attention, no dropout in the target path),
-the prediction objective is MSE, and SIGReg is applied to the target latents
-only. SIGReg projection settings live under `model.sigreg`; loss scaling lives
-under `model.loss_weights`, including `action`, `jepa`, `abstract`,
-`target_sigreg`, and `context_sigreg`.
+the prediction objective uses L1 to match the ACT-JEPA comparison loss, and
+SIGReg is applied to the target latents only. SIGReg projection settings live
+under `model.sigreg`; loss scaling lives under `model.loss_weights`, including
+`action`, `jepa`, `abstract`, `target_sigreg`, and `context_sigreg`.
 
 Available environments are `pusht`, `metaworld`, `mani_skill`, and `crane_x7`.
 Available model configs include `act`, `act-jepa`, `act-lejepa`,
@@ -143,11 +143,17 @@ RUN_TRAIN=0 RUN_EVAL=1 MODELS=act-jepa scripts/run_crane_x7_experiments.sh
 # CRANE-X7 camera-view evaluation
 RUN_TRAIN=0 RUN_EVAL=1 CAMERA_VIEWS=right,left,front \
   MODELS=act-jepa scripts/run_crane_x7_experiments.sh
+
+# override the held-out seed used only by the final CRANE-X7 evaluation
+RUN_TRAIN=0 RUN_EVAL=1 FINAL_EVAL_SEED=3000 \
+  MODELS=act-jepa scripts/run_crane_x7_experiments.sh
 ```
 
 `scripts/run_crane_x7_experiments.sh` defaults `RUN_EVAL=0`, because CRANE-X7
 rollouts are more expensive than the other environments. Set `RUN_EVAL=1` when
-you want the extra rollout pass.
+you want the extra rollout pass. CRANE-X7 configs use `env.seed` for
+training-time checkpoint selection and `env.final_eval_seed` for this standalone
+final evaluation.
 
 For low-VRAM `lewm-bc` runs, use a small per-device batch and gradient
 accumulation, for example:

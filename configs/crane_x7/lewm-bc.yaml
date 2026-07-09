@@ -118,8 +118,8 @@ dataset:
     - local/crane_x7_lift
   revision: 'main'
   use_videos: True
-  train_episodes_range: [0, 50]
-  test_episodes_range: [50, 60]
+  train_episodes_range: [0, 100]
+  test_episodes_range: [100, 120]
 
 env:
   rollout_steps: 1000

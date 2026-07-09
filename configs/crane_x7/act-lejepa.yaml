@@ -101,15 +101,18 @@ dataset:
     - local/crane_x7_lift
   revision: 'main'
   use_videos: True
-  train_episodes_range: [0, 50]
-  test_episodes_range: [50, 60]
+  train_episodes_range: [0, 100]
+  test_episodes_range: [100, 120]
 
 env:
   rollout_steps: 1000
   rollout_delay: 1 # skip rollout at the beginning
 
   num_episodes: 20
+  # Used by training-time rollouts for checkpoint selection.
   seed: 1000
+  # Used only by the standalone final evaluation runner.
+  final_eval_seed: 2000
 
   env_kwargs:
     id: CraneX7-v0

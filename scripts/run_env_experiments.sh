@@ -73,7 +73,8 @@ make_crane_eval_config() {
     "${EVAL_NUM_EPISODES:-${NUM_EPISODES:-}}" \
     "${EVAL_MAX_EPISODE_STEPS:-${MAX_EPISODE_STEPS:-}}" \
     "${SHOW_VIEWER:-0}" \
-    "${SHOW_CAMERAS:-}" <<'PY'
+    "${SHOW_CAMERAS:-}" \
+    "${FINAL_EVAL_SEED:-}" <<'PY'
 from pathlib import Path
 import sys
 import yaml
@@ -85,6 +86,7 @@ num_episodes = sys.argv[4]
 max_episode_steps = sys.argv[5]
 show_viewer = sys.argv[6]
 show_cameras = sys.argv[7]
+final_eval_seed_override = sys.argv[8]
 
 
 def as_bool(value):
@@ -123,6 +125,11 @@ env_kwargs["show_viewer"] = as_bool(show_viewer)
 
 if show_cameras != "":
     env_kwargs["show_cameras"] = as_bool(show_cameras)
+configured_final_eval_seed = env.pop("final_eval_seed", None)
+if final_eval_seed_override != "":
+    env["seed"] = int(final_eval_seed_override)
+elif configured_final_eval_seed is not None:
+    env["seed"] = int(configured_final_eval_seed)
 if num_episodes != "":
     env["num_episodes"] = int(num_episodes)
 if max_episode_steps != "":
