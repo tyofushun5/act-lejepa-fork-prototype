@@ -8,7 +8,7 @@ environment:
   dt: 0.0025
   substeps: 40
   device: cpu
-  show_viewer: true
+  show_viewer: false
   # Genesis VisOptions.show_cameras; draws camera bodies/frustums in the viewer.
   show_cameras: false
   # Genesis VisOptions.plane_reflection; works with the rasterized viewer/cameras.
