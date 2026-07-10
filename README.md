@@ -32,19 +32,38 @@ conda activate act-jepa
 pip install -r requirements.txt
 ```
 
+## Weights & Biases ロギング
+
+学習コンフィグはデフォルトで W&B にログを送ります。挙動は `WANDB_MODE` で
+切り替えます。`online` は W&B にアップロード（`wandb login` または
+`WANDB_API_KEY` が必要）、`offline` はログイン不要でローカルの `wandb/`
+ディレクトリに保存のみ、`disabled` はロギングを完全に無効化します。
+デフォルト値は `.env` に設定し（`.env.example` を参照）、実行時はシェルの
+環境変数で上書きできます（シェル側が `.env` より優先されます）:
+
+```bash
+WANDB_MODE=offline python -m scripts.train --config_path configs/pusht/act-jepa.yaml
+```
+
+オフラインで保存した run は、あとから `wandb sync wandb/offline-run-*` で
+アップロードできます。
+
 ## Docker
 
-The Docker image is configured for offline experiment runs. W&B is installed,
-but `WANDB_MODE=offline` is set by default, so logs and videos are written under
-the local `wandb/` directory instead of being uploaded.
+Docker イメージはオフラインでの実験実行向けに設定されています。W&B は
+インストール済みですが、デフォルトで `WANDB_MODE=offline` が設定されて
+いるため、ログや動画はアップロードされずローカルの `wandb/` ディレクトリに
+書き込まれます。コンテナ内からアップロードしたい場合は `docker run` に
+`-e WANDB_MODE=online`（および `-e WANDB_API_KEY=...`）を渡してください。
 
-Build the image:
+イメージのビルド:
 
 ```bash
 docker build -t act-jepa .
 ```
 
-Run ManiSkill with local logs, W&B files, and Hugging Face cache mounted:
+ローカルのログ・W&B ファイル・Hugging Face キャッシュをマウントして
+ManiSkill を実行:
 
 ```bash
 docker run --rm --gpus all -it \
@@ -55,9 +74,10 @@ docker run --rm --gpus all -it \
   python -m scripts.train --config_path configs/mani_skill/act-jepa.yaml
 ```
 
-The image also defaults Hugging Face to offline mode. If the cache is not
-already populated, run once with `HF_HUB_OFFLINE=0`, `TRANSFORMERS_OFFLINE=0`,
-and `HF_DATASETS_OFFLINE=0`, or mount a pre-populated cache.
+イメージは Hugging Face もデフォルトでオフラインモードになっています。
+キャッシュが未取得の場合は、初回のみ `HF_HUB_OFFLINE=0`、
+`TRANSFORMERS_OFFLINE=0`、`HF_DATASETS_OFFLINE=0` を付けて実行するか、
+取得済みのキャッシュをマウントしてください。
 
 ## Training
 
