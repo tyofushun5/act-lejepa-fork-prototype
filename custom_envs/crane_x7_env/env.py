@@ -208,7 +208,16 @@ class CraneX7Env(gym.Env):
             self._restore_torch_default_dtype()
 
     def close(self):
-        self._restore_torch_default_dtype()
+        try:
+            # Evaluation builds a fresh env per rollout batch; without destroy,
+            # GPU/EGL scene resources leak and accumulate for the whole run.
+            scene = getattr(self, 'scene', None)
+            if scene is not None:
+                scene.destroy()
+                self.scene = None
+                self.genesis_cfg.scene = None
+        finally:
+            self._restore_torch_default_dtype()
 
     # ------------------------------------------------------------- helpers
 

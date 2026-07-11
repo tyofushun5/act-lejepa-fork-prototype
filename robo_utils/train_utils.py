@@ -221,6 +221,13 @@ def get_policy(config: Config, metadata: Metadata, processor=None) -> PolicyWrap
     return policy
 
 def default_train_loop(config: Config, callbacks: list):
+    # DataLoader workers must be spawned, not forked: forking a process that
+    # already initialized CUDA/Genesis(EGL) duplicates driver state, and the
+    # NVIDIA kernel module can crash the host when such workers exit
+    # (Nv01FreeWithSecInfo NULL-deref, observed on multiple machines).
+    import torch.multiprocessing
+    torch.multiprocessing.set_start_method('spawn', force=True)
+
     # set seed
     set_seed(config.training_arguments.seed)
 

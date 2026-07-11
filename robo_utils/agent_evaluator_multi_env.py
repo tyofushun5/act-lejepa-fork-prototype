@@ -84,14 +84,16 @@ class AgentEvaluatorMultiEnv:
         runs, as some environments (Robocasa) do not have a deterministic reset.
         '''
         env = self._create_env(env_name, env_kwargs)
-        evaluator = AgentEvaluator(
-            self.policy,
-            env,
-            seed=self.config.env.seed,
-            num_envs=self.config.env.num_episodes
-        )
-        dataset, info = evaluator()
-        env.close()
+        try:
+            evaluator = AgentEvaluator(
+                self.policy,
+                env,
+                seed=self.config.env.seed,
+                num_envs=self.config.env.num_episodes
+            )
+            dataset, info = evaluator()
+        finally:
+            env.close()
         return dataset, info
 
     def _create_env(self, env_name: str, env_kwargs: dict):
