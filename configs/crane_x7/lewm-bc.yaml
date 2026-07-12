@@ -133,6 +133,7 @@ env:
     id: CraneX7-v0
     img_size: 224
     max_episode_steps: 300
+    success_height: 0.175
 
   env_names:
     - lift-cube
