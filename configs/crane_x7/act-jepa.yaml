@@ -95,7 +95,7 @@ dataset:
   test_episodes_range: [100, 120]
 
 env:
-  rollout_steps: 300
+  rollout_steps: 500
   rollout_delay: 1 # skip rollout at the beginning
 
   num_episodes: 20
