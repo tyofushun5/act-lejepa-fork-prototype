@@ -4,7 +4,7 @@ app: act-lejepa pusht
 training_arguments:
   # seed
   seed: 42
-  max_steps: 5000
+  max_steps: 4000
 
   # optimization
   optim: adamw_torch

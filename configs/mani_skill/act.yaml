@@ -4,7 +4,7 @@ app: act-original mani_skill
 training_arguments:
   # seed
   seed: 42
-  max_steps: 5000
+  max_steps: 4000
 
   # optimization
   optim: adamw_torch
@@ -78,7 +78,7 @@ dataset:
 
   revision: 'main'
   use_videos: True
-  train_episodes_range: [0, 40]
+  train_episodes_range: [0, 50]
   test_episodes_range: [40, 50]
 
 env:
