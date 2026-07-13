@@ -24,7 +24,7 @@ training_arguments:
   logging_steps: 50
   logging_first_step: true
   log_on_each_node: false
-  
+
   save_strategy: steps
   save_steps: 1000 # save every n steps (and the last step)
 
@@ -60,7 +60,7 @@ model: &model
     hidden_act: relu
     attention_dropout: 0.1
     horizon: *horizon
-  
+
   target_encoder:
     <<: *common_params
     causal: false
@@ -74,7 +74,7 @@ model: &model
   predictor:
     <<: *common_params
     # narrow predictor
-    hidden_size: 128 
+    hidden_size: 128
     intermediate_size: 512
     causal: false
 
@@ -82,13 +82,6 @@ model: &model
     weight: 0.09
     knots: 17
     num_proj: 1024
-
-  loss_weights:
-    action: 1.0
-    jepa: 1.0
-    abstract: 1.0
-    target_sigreg: 0.09
-    context_sigreg: 0.0
 
 # --------------------- Metaworld settings ---------------------
 dataset: &dataset
@@ -120,7 +113,7 @@ env: &env
 
   num_episodes: 20
   seed: 1000
-  
+
   env_kwargs:
     id: Metaworld-v3
     img_size: 128
@@ -188,11 +181,11 @@ action_predictor:
 
   model:
     <<: *model
-    class_name: ActionPredictorModel  
+    class_name: ActionPredictorModel
     freeze_encoder: true
 
   dataset: *dataset
 
-  env: 
+  env:
     <<: *env
     rollout_steps: 250 # the same as action predictor logging and max steps

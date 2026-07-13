@@ -1,6 +1,6 @@
 from transformers.modeling_utils import PreTrainedModel
 
-from .act_model_original import ActModel
+from .act_model_original import ActConfig, ActModel, ActionChunkingPolicy
 
 
 class ActionPredictorModel(ActModel):
@@ -13,7 +13,7 @@ class ActionPredictorModel(ActModel):
         super().__init__(config)
         # this will be context encoder from JEPA, not ActEncoder
         self.encoder = encoder
-    
+
     def forward(self, return_loss=True, **inputs):
         # Can be fine-tuned or linear probe (frozen backbone)
         if getattr(self.config, 'freeze_encoder', True):
