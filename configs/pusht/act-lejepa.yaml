@@ -88,13 +88,6 @@ model:
     knots: 17
     num_proj: 1024
 
-  loss_weights:
-    action: 1.0
-    jepa: 1.0
-    abstract: 1.0
-    target_sigreg: 0.09
-    context_sigreg: 0.0
-
 # --------------------- PushT settings ---------------------
 dataset:
   repo_ids:
