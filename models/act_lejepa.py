@@ -214,7 +214,7 @@ class Lejepa(PreTrainedModel):
         # Extract non-padded tokens
         abstract_pred = abstract_pred[~is_pad]
         abstract_labels = abstract_labels[~is_pad]
-        return F.l1_loss(abstract_pred, abstract_labels)
+        return F.mse_loss(abstract_pred, abstract_labels)
 
     def target_sigreg_loss_function(self, abstract_labels, **kwargs):
         if self.target_sigreg_weight <= 0:
