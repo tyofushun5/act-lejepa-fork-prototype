@@ -39,7 +39,7 @@ training_arguments:
 
 normalize_keys: ['action', 'observation.state']
 
-callbacks: ['AgentEvaluatorCallback', 'LogAuxiliaryLossCallback', 'StatePredictorCallback']
+callbacks: ['AgentEvaluatorCallback', 'LogAuxiliaryLossCallback']
 
 # --------------------- Features ---------------------
 feature_config: &horizon

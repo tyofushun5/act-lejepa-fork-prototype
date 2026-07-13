@@ -35,7 +35,7 @@ training_arguments:
 
 normalize_keys: []
 
-callbacks: ['LogAuxiliaryLossCallback', 'AgentEvaluatorCallback', 'StatePredictorCallback']
+callbacks: ['LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
 
 # --------------------- Features ---------------------
 feature_config: &horizon

@@ -6,6 +6,13 @@ from time import time
 import pandas as pd
 from copy import deepcopy
 
+def _disable_nested_trainer_workers(config):
+    args = config.training_arguments
+    args.report_to = []
+    args.dataloader_num_workers = 0
+    args.dataloader_persistent_workers = False
+
+
 class AgentEvaluatorCallback(TrainerCallback):
     '''Callback for evaluating an agent using MultiAgentEvaluator.'''
     def __init__(self, trainer: Trainer, config: PretrainedConfig):
@@ -40,15 +47,15 @@ class AgentEvaluatorCallback(TrainerCallback):
         # Check if a new best metric is found
         self.should_save(metric_value=info[self.metric_key])
 
-        # Log to wandb        
+        # Log to wandb
         if 'wandb' in args.report_to:
             wandb_videos = self.get_wandb_videos(dataset)
             wandb_view_comparison = self.get_wandb_view_comparison(state.global_step)
             wandb.log((info | wandb_videos | wandb_view_comparison), step=state.global_step)
-        
+
         # self.save_dataset_to_disk(dataset)
         self.info = info
-        
+
     def save_dataset_to_disk(self, dataset: HFDataset):
         from .dataset.save_utils import save_dataset_pipeline
         dataset_path = f'logs/wandb/rollout_dataset_{self.trainer.state.global_step}'
@@ -111,7 +118,7 @@ class AgentEvaluatorCallback(TrainerCallback):
         '''Create and return a wandb video for logging.'''
         img_col_name = next((n for n, t in dataset.features.items()
                             if isinstance(t, datasets.features.Image)), None)
-        
+
         if img_col_name:
             extension = 'mp4'
             safe_name = str(name).replace('/', '_')
@@ -119,7 +126,7 @@ class AgentEvaluatorCallback(TrainerCallback):
             video_path = save_episode_video(video_dir, dataset, img_col_name, extension=extension)
             ep_video = wandb.Video(video_path, format=extension)
             return ep_video
-    
+
     def should_rollout(self):
         '''Check if it's time to rollout and evaluate the agent.'''
         step = self.trainer.state.global_step
@@ -130,7 +137,7 @@ class AgentEvaluatorCallback(TrainerCallback):
         if step % self.rollout_steps == 0:
             return True
         return False
-    
+
     def should_save(self, metric_value):
         '''
         Check if the current metric value is the best so far and update Trainer state.
@@ -184,7 +191,7 @@ class SaveBestCheckpointCallback(TrainerCallback):
 class EmaUpdateCallback(TrainerCallback):
     '''
     Uses EMA to update weights of the target encoder.
-    Note that if using grad accum, updating target encoder should happen 
+    Note that if using grad accum, updating target encoder should happen
     once the gradients are synced and the model's weights are updated.
     In HF trainer, this happens on the on_step_end event.
     '''
@@ -192,9 +199,9 @@ class EmaUpdateCallback(TrainerCallback):
         super().__init__()
         self.trainer = trainer
         # Get the total number of optimizer updates. Note:
-        # max_steps is the number of optimizer steps and already accounts 
+        # max_steps is the number of optimizer steps and already accounts
         # for gradient_accumulation_steps. No need to divide by gradient_accumulation_steps.
-        total_num_updates = trainer.args.max_steps 
+        total_num_updates = trainer.args.max_steps
         self.ema_momentum = config.ema_start
         self.ema_step = (config.ema_end - config.ema_start) / total_num_updates
 
@@ -203,8 +210,8 @@ class EmaUpdateCallback(TrainerCallback):
         self.trainer.model.model.update_target_encoder(m=self.ema_momentum)
 
         # Update EMA momentum (and clip so we don't exceed valid range)
-        self.ema_momentum += self.ema_step 
-        self.ema_momentum = min(self.ema_momentum, 1)    
+        self.ema_momentum += self.ema_step
+        self.ema_momentum = min(self.ema_momentum, 1)
 
     def on_step_end(self, args, state, control, **kwargs):
         # Log EMA to wandb
@@ -213,32 +220,13 @@ class EmaUpdateCallback(TrainerCallback):
         wandb.log({'train/ema': self.ema_momentum}, state.global_step)
 
 
-class HardTargetUpdateCallback(TrainerCallback):
-    '''
-    Copies the context encoder weights into the target encoder after each
-    optimizer step. This disables EMA target updates while keeping the two
-    encoders synchronized throughout training.
-    '''
-    def __init__(self, trainer: Trainer, config=None):
-        super().__init__()
-        self.trainer = trainer
-
-    def on_optimizer_step(self, args, state, control, **kwargs):
-        self.trainer.model.model.copy_context_to_target_encoder()
-
-    def on_step_end(self, args, state, control, **kwargs):
-        if not state.is_world_process_zero or 'wandb' not in args.report_to or not control.should_log:
-            return
-        wandb.log({'train/target_encoder_hard_sync': 1}, state.global_step)
-
-
 class CollectLossCallback(TrainerCallback):
 
     def __init__(self, trainer: Trainer, config=None):
         self.trainer = trainer
         self.auxiliary_losses = []
         self.eval_losses = []
-    
+
     def _get_auxiliary_loss_values(self):
         # NOTE: this works only on a single process, not on distributed.
         # the model might be wrapped
@@ -251,7 +239,7 @@ class CollectLossCallback(TrainerCallback):
     def on_step_end(self, args, state, control, **kwargs):
         loss_values = self._get_auxiliary_loss_values()
         self.auxiliary_losses.append(loss_values)
-    
+
     def on_evaluate(self, args, state, control, logs = None, **kwargs):
         if logs and 'eval_loss' in logs:
             self.eval_losses.append(logs['eval_loss'])
@@ -270,7 +258,7 @@ class LogAuxiliaryLossCallback(CollectLossCallback):
 
 import torch
 import gc
- 
+
 class _PreserveTorchRNG:
     '''Preserve and restore Torch RNG state (CPU and all CUDA devices).'''
     def __enter__(self):
@@ -293,8 +281,7 @@ class StatePredictorCallback(TrainerCallback):
         self.trainer: Trainer = trainer
         self.config = config
         assert self.config.get('state_predictor') is not None
-        # Make sure that wandb doesn't try to create new instance in the callback.
-        self.config.state_predictor.training_arguments.report_to = [] 
+        _disable_nested_trainer_workers(self.config.state_predictor)
     # No need to keep historical probe callbacks/results; we'll log and discard.
 
     def should_run(self) -> bool:
@@ -312,7 +299,7 @@ class StatePredictorCallback(TrainerCallback):
         # Start probe training and collect losses
         from scripts.train_state_predictor import train_loop
         encoder = deepcopy(self.trainer.model.model.encoder)
-        
+
         print('State Predictor Training Starting')
         # Preserve Torch RNG state so probe training doesn't perturb the main loop
         with _PreserveTorchRNG():
@@ -324,7 +311,7 @@ class StatePredictorCallback(TrainerCallback):
             'auxiliary_losses': list(cb.auxiliary_losses),
             'eval_losses': list(cb.eval_losses),
         }
-        
+
         # check if the original (not callback) trainer is reporting to wandb
         if 'wandb' in self.trainer.args.report_to:
             self._log_to_wandb(results)
@@ -358,9 +345,8 @@ class ActionPredictorCallback(TrainerCallback):
         self.trainer: Trainer = trainer
         self.config = config
         assert self.config.get('action_predictor') is not None
-        # Make sure that wandb doesn't try to create new instance in the callback.
-        self.config.action_predictor.training_arguments.report_to = [] 
-    
+        _disable_nested_trainer_workers(self.config.action_predictor)
+
     def should_run(self) -> bool:
         every_n_steps = self.config.action_predictor_every_n_steps
         step = self.trainer.state.global_step
@@ -369,7 +355,7 @@ class ActionPredictorCallback(TrainerCallback):
         if step % every_n_steps == 0:
             return True
         return False
-    
+
     def on_step_end(self, args, state, control, **kwargs):
         if not state.is_world_process_zero or not self.should_run():
             return
@@ -396,10 +382,10 @@ class ActionPredictorCallback(TrainerCallback):
         # check if the original (not callback) trainer is reporting to wandb
         if 'wandb' in self.trainer.args.report_to:
             self._log_to_wandb(results)
-            
+
 
     def _log_to_wandb(self, results: dict):
-        
+
         key = 'action_predictor/reconstruction_loss'
         wandb.log({key: results[key]}, self.trainer.state.global_step)
 
@@ -407,4 +393,3 @@ class ActionPredictorCallback(TrainerCallback):
         rollout_results = results.get('rollout_results', None)
         if rollout_results:
             wandb.log((rollout_results), step=self.trainer.state.global_step)
-        
