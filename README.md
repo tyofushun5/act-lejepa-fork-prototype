@@ -154,8 +154,8 @@ scripts/run_all_experiments.sh
 Useful environment variables:
 
 ```bash
-# train only, no standalone evaluation after training
-RUN_EVAL=0 MODELS=lewm-bc scripts/run_crane_x7_experiments.sh
+# train only, no standalone evaluation after training; this is the default
+MODELS=lewm-bc scripts/run_crane_x7_experiments.sh
 
 # evaluate only
 RUN_TRAIN=0 RUN_EVAL=1 MODELS=act-jepa scripts/run_crane_x7_experiments.sh
@@ -169,9 +169,9 @@ RUN_TRAIN=0 RUN_EVAL=1 FINAL_EVAL_SEED=3000 \
   MODELS=act-jepa scripts/run_crane_x7_experiments.sh
 ```
 
-`scripts/run_crane_x7_experiments.sh` defaults `RUN_EVAL=0`, because CRANE-X7
-rollouts are more expensive than the other environments. Set `RUN_EVAL=1` when
-you want the extra rollout pass. CRANE-X7 configs use `env.seed` for
+Experiment runners default to `RUN_EVAL=0`, so they do not run the extra
+standalone evaluation pass after training. Set `RUN_EVAL=1` when you want that
+additional checkpoint evaluation. CRANE-X7 configs use `env.seed` for
 training-time checkpoint selection and `env.final_eval_seed` for this standalone
 final evaluation.
 

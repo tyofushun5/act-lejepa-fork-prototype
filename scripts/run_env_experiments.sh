@@ -35,7 +35,7 @@ is_enabled() {
 }
 
 run_train="${RUN_TRAIN:-1}"
-run_eval="${RUN_EVAL:-1}"
+run_eval="${RUN_EVAL:-0}"
 log_eval_wandb="${LOG_EVAL_WANDB:-1}"
 
 if ! is_enabled "${run_train}" && ! is_enabled "${run_eval}"; then
