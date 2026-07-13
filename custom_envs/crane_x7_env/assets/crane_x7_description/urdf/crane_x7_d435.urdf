@@ -538,9 +538,7 @@
       <inertia ixx="1.01E-05" ixy="-1.97E-07" ixz="-9.89E-08" iyy="4.95E-06" iyz="5.37E-07" izz="6.24E-06"/>
     </inertial>
   </link>
-  <!--Dummy joint/link to prevent error with mimic joint
-    See https://github.com/ros-controls/gazebo_ros2_control/issues/173
-    -->
+  <!--Dummy joint/link to prevent error with mimic joint-->
   <joint name="crane_x7_gripper_finger_b_joint_mimic" type="fixed">
     <parent link="world"/>
     <child link="dummy_mimic_fix"/>
@@ -575,94 +573,4 @@
       <inertia ixx="7.48E-06" ixy="3.61E-07" ixz="6.34E-08" iyy="4.09E-06" iyz="2.28E-07" izz="4.37E-06"/>
     </inertial>
   </link>
-  <ros2_control name="crane_x7" type="system">
-    <hardware>
-      <plugin>crane_x7_hardware/CraneX7Hardware</plugin>
-      <param name="port_name">/dev/ttyUSB0</param>
-      <param name="baudrate">3000000</param>
-      <param name="timeout_seconds">1.0</param>
-      <param name="manipulator_config_file_path"></param>
-      <param name="manipulator_links_file_path"></param>
-    </hardware>
-    <joint name="crane_x7_shoulder_fixed_part_pan_joint">
-      <command_interface name="position">
-        <param name="min">-2.7401669256310974</param>
-        <param name="max">2.7401669256310974</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-      <param name="current_to_effort">2.20</param>
-    </joint>
-    <joint name="crane_x7_shoulder_revolute_part_tilt_joint">
-      <command_interface name="position">
-        <param name="min">-1.5707963267948966</param>
-        <param name="max">1.5707963267948966</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-      <param name="current_to_effort">3.60</param>
-    </joint>
-    <joint name="crane_x7_upper_arm_revolute_part_twist_joint">
-      <command_interface name="position">
-        <param name="min">-2.7401669256310974</param>
-        <param name="max">2.7401669256310974</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-      <param name="current_to_effort">2.20</param>
-    </joint>
-    <joint name="crane_x7_upper_arm_revolute_part_rotate_joint">
-      <command_interface name="position">
-        <param name="min">-2.775073510670984</param>
-        <param name="max">1.7453292519943296e-05</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-      <param name="current_to_effort">2.20</param>
-    </joint>
-    <joint name="crane_x7_lower_arm_fixed_part_joint">
-      <command_interface name="position">
-        <param name="min">0.0</param>
-        <param name="max">0.0</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-      <param name="current_to_effort">2.20</param>
-    </joint>
-    <joint name="crane_x7_lower_arm_revolute_part_joint">
-      <command_interface name="position">
-        <param name="min">-1.5707963267948966</param>
-        <param name="max">1.5707963267948966</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-      <param name="current_to_effort">2.20</param>
-    </joint>
-    <joint name="crane_x7_wrist_joint">
-      <command_interface name="position">
-        <param name="min">-2.91469985083053</param>
-        <param name="max">2.91469985083053</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-      <param name="current_to_effort">2.20</param>
-    </joint>
-    <joint name="crane_x7_gripper_finger_a_joint">
-      <command_interface name="position">
-        <param name="min">-0.08726646259971647</param>
-        <param name="max">1.5707963267948966</param>
-      </command_interface>
-      <state_interface name="position"/>
-      <state_interface name="velocity"/>
-      <state_interface name="effort"/>
-      <param name="current_to_effort">2.20</param>
-    </joint>
-  </ros2_control>
 </robot>

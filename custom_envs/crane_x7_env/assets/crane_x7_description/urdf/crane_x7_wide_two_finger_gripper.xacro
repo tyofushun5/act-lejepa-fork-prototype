@@ -78,9 +78,7 @@
       </inertial>
     </link>
 
-    <!--Dummy joint/link to prevent error with mimic joint
-    See https://github.com/ros-controls/gazebo_ros2_control/issues/173
-    -->
+    <!--Dummy joint/link to prevent error with mimic joint-->
     <joint name="${name_joint_gripper_finger_b}_mimic" type="fixed">
       <parent link="world" />
       <child link="dummy_mimic_fix" />

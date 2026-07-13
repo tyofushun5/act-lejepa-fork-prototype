@@ -12,7 +12,6 @@ Changelog for package crane_x7_description
 
 3.0.0 (2023-08-24)
 ------------------
-* Delete .ci.rosinstall to fix ign_ros2_controll installation in CI. (`#9 <https://github.com/rt-net/crane_x7_description/issues/9>`_)
 * Fix gripper mimic joint control (`#8 <https://github.com/rt-net/crane_x7_description/issues/8>`_)
 * Support ROS 2 Humble (`#4 <https://github.com/rt-net/crane_x7_description/issues/4>`_)
 * RealSense D435搭載モデルに対応 (`#5 <https://github.com/rt-net/crane_x7_description/issues/5>`_)
