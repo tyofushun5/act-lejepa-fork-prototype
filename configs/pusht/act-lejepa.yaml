@@ -84,7 +84,7 @@ model:
     causal: false
 
   sigreg:
-    weight: 0.01
+    weight: 0.09
     knots: 17
     num_proj: 1024
 
