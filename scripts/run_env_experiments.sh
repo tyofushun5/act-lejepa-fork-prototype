@@ -43,7 +43,7 @@ if ! is_enabled "${run_train}" && ! is_enabled "${run_eval}"; then
   exit 1
 fi
 
-models_string="${MODELS:-act act-jepa act-lejepa}"
+models_string="${MODELS:-act act-jepa act-lejepa act-lejepa2}"
 models_string="${models_string//,/ }"
 read -r -a models <<< "${models_string}"
 

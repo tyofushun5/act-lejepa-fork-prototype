@@ -1,0 +1,145 @@
+app: act-lejepa2 metaworld
+
+# --------------------- Training ---------------------
+training_arguments:
+  # seed
+  seed: 42
+  max_steps: 4000
+
+  # optimization
+  optim: adamw_torch
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.04
+  learning_rate: 6.0e-4
+  weight_decay: 0.1
+
+  # dataloader
+  per_device_train_batch_size: 128
+  per_device_eval_batch_size: 128
+  dataloader_num_workers: 16
+  dataloader_drop_last: true
+
+  # log training
+  logging_strategy: steps
+  logging_steps: 50
+  logging_first_step: true
+  log_on_each_node: false
+  
+  save_strategy: steps
+  save_steps: 1000 # save every n steps (and the last step)
+
+  # other
+  gradient_accumulation_steps: 1
+  full_determinism: true
+  report_to: ['wandb']
+
+normalize_keys: []
+
+callbacks: ['LogAuxiliaryLossCallback', 'AgentEvaluatorCallback']
+
+# --------------------- Features ---------------------
+feature_config: &horizon
+  observation.image: 1
+  observation.state: 30
+  episode_index: 1
+  task_index: 1
+  action: 30
+
+
+# --------------------- Policy model ---------------------
+model:
+  policy_name: ActionChunkingPolicy
+  class_name: ActLejepa2Model
+  target_update: grad
+  use_token_type_embeddings: true
+  branch_norm: true
+  target_trunk_eval: true
+  horizon: *horizon
+
+  encoder: &common_params
+    hidden_size: 512
+    intermediate_size: 2048
+    num_hidden_layers: 4
+    num_attention_heads: 8
+    hidden_act: relu
+    attention_dropout: 0.1
+    horizon: *horizon
+  
+  target_encoder:
+    <<: *common_params
+    causal: false
+    attention_dropout: 0.0 # clean labels: no dropout in the target path
+
+  decoder:
+    <<: *common_params
+    num_hidden_layers: 1
+    causal: false
+
+  predictor:
+    <<: *common_params
+    # narrow predictor
+    hidden_size: 128 
+    intermediate_size: 512
+    causal: false
+
+  sigreg:
+    weight: 0.05
+    knots: 17
+    num_proj: 1024
+
+# --------------------- Metaworld settings ---------------------
+dataset:
+  repo_ids:
+    - alek98/metaworld_button-press-topdown-v3
+    - alek98/metaworld_button-press-topdown-wall-v3
+    - alek98/metaworld_button-press-v3
+    - alek98/metaworld_button-press-wall-v3
+    - alek98/metaworld_coffee-button-v3
+    - alek98/metaworld_coffee-pull-v3
+    - alek98/metaworld_coffee-push-v3
+    - alek98/metaworld_drawer-open-v3
+    - alek98/metaworld_faucet-close-v3
+    - alek98/metaworld_faucet-open-v3
+    - alek98/metaworld_disassemble-v3
+    - alek98/metaworld_door-close-v3
+    - alek98/metaworld_door-open-v3
+    - alek98/metaworld_window-close-v3
+    - alek98/metaworld_window-open-v3
+
+  revision: 'main'
+  use_videos: True
+  train_episodes_range: [0, 40]
+  test_episodes_range: [40, 50]
+
+env:
+  rollout_steps: 1000
+  rollout_delay: 1 # skip rollout at the beginning
+
+  num_episodes: 20
+  seed: 1000
+  
+  env_kwargs:
+    id: Metaworld-v3
+    img_size: 128
+    max_episode_steps: 200 # max num steps
+    is_random_hand_pos: false # turn off to match old dataset
+
+  env_names:
+    - button-press-topdown-v3
+    - button-press-topdown-wall-v3
+    - button-press-v3
+    - button-press-wall-v3
+    - coffee-button-v3
+    - coffee-pull-v3
+    - coffee-push-v3
+    - drawer-open-v3
+    - faucet-close-v3
+    - faucet-open-v3
+    - disassemble-v3
+    - door-close-v3
+    - door-open-v3
+    - window-close-v3
+    - window-open-v3
+
+state_predictor: !inc state_predictor.yaml
+state_predictor_every_n_steps: 1000
