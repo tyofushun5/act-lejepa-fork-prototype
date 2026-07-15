@@ -56,8 +56,7 @@ model:
   class_name: ActLejepa2Model
   target_update: grad
   use_token_type_embeddings: true
-  branch_norm: true
-  target_trunk_eval: true
+  target_causal: false
   horizon: *horizon
 
   encoder: &common_params
@@ -66,14 +65,9 @@ model:
     num_hidden_layers: 4
     num_attention_heads: 8
     hidden_act: relu
-    attention_dropout: 0.1
+    attention_dropout: 0.1 # shared by context and target passes
     horizon: *horizon
   
-  target_encoder:
-    <<: *common_params
-    causal: false
-    attention_dropout: 0.0 # clean labels: no dropout in the target path
-
   decoder:
     <<: *common_params
     num_hidden_layers: 1

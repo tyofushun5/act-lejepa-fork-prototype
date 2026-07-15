@@ -1,165 +1,16 @@
+from types import SimpleNamespace
+
 import torch
 from torch import nn
-from types import SimpleNamespace
 from transformers import ResNetModel
 from transformers.configuration_utils import PretrainedConfig
 
 from models.act_lejepa2 import (
     ActLejepa2Config,
     Lejepa2,
-    TargetEncoder,
+    ObservationEncoder,
     TokenType,
 )
-
-
-class _MixingTrunk(nn.Module):
-    """Small shared trunk that makes cross-token dependencies observable."""
-
-    def __init__(self):
-        super().__init__()
-        self.mix = nn.Parameter(torch.tensor(1.0))
-        self.last_hidden_shape = None
-        self.last_attention_mask = None
-
-    def forward(self, hidden_states, attention_mask=None):
-        self.last_hidden_shape = tuple(hidden_states.shape)
-        self.last_attention_mask = attention_mask.detach().clone()
-
-        visible = attention_mask[:, 0, 0, :].unsqueeze(-1)
-        pooled = (hidden_states * visible).sum(dim=1, keepdim=True)
-        pooled = pooled / visible.sum(dim=1, keepdim=True).clamp_min(1)
-        return hidden_states + self.mix * pooled
-
-
-class _SharedObservationEncoder(nn.Module):
-    def __init__(self, state_dim, hidden_size):
-        super().__init__()
-        self.state_emb = nn.Linear(state_dim, hidden_size, bias=False)
-        self.task_emb = nn.Embedding(8, hidden_size)
-        self.shared_trunk = _MixingTrunk()
-        self.last_type_ids = None
-
-    def _get_task_token(self, task_index):
-        return self.task_emb(task_index.to(dtype=torch.long))
-
-    def add_token_type_embeddings(self, hidden_states, type_ids):
-        self.last_type_ids = type_ids.detach().clone()
-        return hidden_states
-
-
-def _target_config(*, horizon=3, causal=False):
-    return PretrainedConfig(
-        state_dim=2,
-        hidden_size=8,
-        num_attention_heads=2,
-        attention_dropout=0.0,
-        causal=causal,
-        horizon={'observation.state': horizon},
-    )
-
-
-def test_target_uses_shared_tokenizers_and_preserves_trajectory_sequence():
-    torch.manual_seed(0)
-    context = _SharedObservationEncoder(state_dim=2, hidden_size=8)
-    target = TargetEncoder(_target_config(), branch_norm=False)
-    states = torch.randn(2, 3, 2)
-    pad_mask = torch.tensor([[False, False, False], [False, False, True]])
-
-    output = target(
-        context,
-        target_trunk_eval=False,
-        **{
-            'observation.state': states,
-            'observation.state_is_pad': pad_mask,
-            'task_index': torch.tensor([1, 2]),
-        },
-    )
-
-    assert output.shape == (2, 3, 8)
-    assert not hasattr(target, 'state_emb')
-    assert not hasattr(target, 'task_emb')
-    assert context.shared_trunk.last_hidden_shape == (2, 4, 8)
-    assert context.shared_trunk.last_attention_mask.shape == (2, 2, 4, 4)
-    assert torch.equal(
-        context.last_type_ids,
-        torch.tensor(
-            [
-                [TokenType.TASK, TokenType.TARGET_STATE, TokenType.TARGET_STATE, TokenType.TARGET_STATE],
-                [TokenType.TASK, TokenType.TARGET_STATE, TokenType.TARGET_STATE, TokenType.TARGET_STATE],
-            ]
-        ),
-    )
-
-    expected_visible_keys = torch.tensor(
-        [[True, True, True, True], [True, True, True, False]]
-    )
-    assert torch.equal(
-        context.shared_trunk.last_attention_mask[:, 0, 0, :],
-        expected_visible_keys,
-    )
-
-    output.sum().backward()
-    assert context.state_emb.weight.grad is not None
-    assert context.task_emb.weight.grad is not None
-    assert context.shared_trunk.mix.grad is not None
-
-
-def test_target_states_can_interact_across_time():
-    torch.manual_seed(1)
-    context = _SharedObservationEncoder(state_dim=2, hidden_size=8)
-    target = TargetEncoder(_target_config(), branch_norm=False)
-    inputs = {
-        'observation.state': torch.zeros(1, 3, 2),
-        'observation.state_is_pad': torch.zeros(1, 3, dtype=torch.bool),
-        'task_index': torch.tensor([0]),
-    }
-
-    baseline = target(context, target_trunk_eval=False, **inputs)
-    changed_states = inputs['observation.state'].clone()
-    changed_states[:, -1, :] = 1.0
-    changed = target(
-        context,
-        target_trunk_eval=False,
-        **(inputs | {'observation.state': changed_states}),
-    )
-
-    assert not torch.allclose(baseline[:, 0, :], changed[:, 0, :])
-
-
-def test_target_causal_mask_covers_the_full_sequence():
-    context = _SharedObservationEncoder(state_dim=2, hidden_size=8)
-    target = TargetEncoder(_target_config(causal=True), branch_norm=False)
-
-    target(
-        context,
-        target_trunk_eval=False,
-        **{
-            'observation.state': torch.zeros(1, 3, 2),
-            'observation.state_is_pad': torch.zeros(1, 3, dtype=torch.bool),
-            'task_index': torch.tensor([0]),
-        },
-    )
-
-    expected = torch.tril(torch.ones(4, 4, dtype=torch.bool))
-    assert torch.equal(context.shared_trunk.last_attention_mask[0, 0], expected)
-
-
-def test_target_eval_pass_restores_shared_trunk_training_mode():
-    context = _SharedObservationEncoder(state_dim=2, hidden_size=8)
-    target = TargetEncoder(_target_config(), branch_norm=False)
-    context.shared_trunk.train()
-
-    target(
-        context,
-        target_trunk_eval=True,
-        **{
-            'observation.state': torch.zeros(1, 3, 2),
-            'observation.state_is_pad': torch.zeros(1, 3, dtype=torch.bool),
-            'task_index': torch.tensor([0]),
-        },
-    )
-
-    assert context.shared_trunk.training
 
 
 class _FakeResNet(nn.Module):
@@ -172,7 +23,167 @@ class _FakeResNet(nn.Module):
         return SimpleNamespace(last_hidden_state=self.conv(pixel_values))
 
 
-def test_lejepa2_forward_uses_one_state_and_task_tokenizer(monkeypatch):
+class _MixingTrunk(nn.Module):
+    """Small trunk that records calls and exposes cross-token dependencies."""
+
+    def __init__(self):
+        super().__init__()
+        self.mix = nn.Parameter(torch.tensor(1.0))
+        self.calls = []
+
+    def forward(self, hidden_states, attention_mask=None):
+        self.calls.append(
+            {
+                'hidden_shape': tuple(hidden_states.shape),
+                'attention_mask': (
+                    None if attention_mask is None else attention_mask.detach().clone()
+                ),
+                'training': self.training,
+            }
+        )
+
+        if attention_mask is None:
+            visible = torch.ones(
+                hidden_states.shape[:2],
+                dtype=torch.bool,
+                device=hidden_states.device,
+            )
+        else:
+            visible = attention_mask[:, 0, 0, :]
+        visible = visible.unsqueeze(-1)
+        pooled = (hidden_states * visible).sum(dim=1, keepdim=True)
+        pooled = pooled / visible.sum(dim=1, keepdim=True).clamp_min(1)
+        return hidden_states + self.mix * pooled
+
+
+def _encoder_config():
+    return PretrainedConfig(
+        state_dim=2,
+        hidden_size=8,
+        intermediate_size=16,
+        num_hidden_layers=1,
+        num_attention_heads=2,
+        hidden_act='relu',
+        attention_dropout=0.1,
+    )
+
+
+def _make_encoder(monkeypatch, *, horizon=3, target_causal=False):
+    monkeypatch.setattr(
+        ResNetModel,
+        'from_pretrained',
+        lambda *args, **kwargs: _FakeResNet(),
+    )
+    encoder = ObservationEncoder(
+        _encoder_config(),
+        horizon={'observation.state': horizon},
+        target_causal=target_causal,
+    )
+    encoder.shared_trunk = _MixingTrunk()
+    return encoder
+
+
+def _inputs(*, batch_size=2, horizon=3):
+    return {
+        'observation.image': torch.randn(batch_size, 3, 4, 4),
+        'observation.state': torch.randn(batch_size, horizon, 2),
+        'observation.state_is_pad': torch.zeros(batch_size, horizon, dtype=torch.bool),
+        'task_index': torch.arange(batch_size),
+    }
+
+
+def test_context_and_target_are_two_calls_to_one_encoder(monkeypatch):
+    torch.manual_seed(0)
+    encoder = _make_encoder(monkeypatch)
+    inputs = _inputs()
+    type_id_calls = []
+    encoder.token_type_emb.register_forward_pre_hook(
+        lambda _module, args: type_id_calls.append(args[0].detach().clone())
+    )
+
+    context_state = encoder._get_state_tokens(
+        inputs['observation.state'],
+        context_only=True,
+    )
+    target_states = encoder._get_state_tokens(inputs['observation.state'])
+    assert torch.equal(context_state, target_states[:, :1, :])
+
+    encoder.train()
+    context = encoder.encode_context(**inputs)
+    target = encoder.encode_target(**inputs)
+
+    assert context.shape == (2, 18, 8)
+    assert target.shape == (2, 3, 8)
+    assert [call['training'] for call in encoder.shared_trunk.calls] == [True, True]
+    assert torch.equal(
+        type_id_calls[0],
+        torch.tensor(
+            [[TokenType.TASK, TokenType.STATE] + [TokenType.IMAGE] * 16] * 2
+        ),
+    )
+    assert torch.equal(
+        type_id_calls[1],
+        torch.tensor([[TokenType.TASK] + [TokenType.STATE] * 3] * 2),
+    )
+
+    encoder.eval()
+    encoder.encode_context(**inputs)
+    encoder.encode_target(**inputs)
+    assert [call['training'] for call in encoder.shared_trunk.calls[-2:]] == [False, False]
+
+
+def test_target_preserves_full_trajectory_mask_and_shared_gradients(monkeypatch):
+    torch.manual_seed(1)
+    encoder = _make_encoder(monkeypatch)
+    inputs = _inputs()
+    inputs['observation.state_is_pad'][1, -1] = True
+
+    output = encoder.encode_target(**inputs)
+    call = encoder.shared_trunk.calls[-1]
+    attention_mask = call['attention_mask']
+
+    assert output.shape == (2, 3, 8)
+    assert call['hidden_shape'] == (2, 4, 8)
+    assert attention_mask.shape == (2, 2, 4, 4)
+    assert torch.equal(
+        attention_mask[:, 0, 0, :],
+        torch.tensor(
+            [[True, True, True, True], [True, True, True, False]]
+        ),
+    )
+
+    output.sum().backward()
+    assert encoder.state_emb.weight.grad is not None
+    assert encoder.task_emb.weight.grad is not None
+    assert encoder.shared_trunk.mix.grad is not None
+
+
+def test_target_states_can_interact_across_time(monkeypatch):
+    torch.manual_seed(2)
+    encoder = _make_encoder(monkeypatch)
+    inputs = _inputs(batch_size=1)
+    inputs['observation.state'].zero_()
+
+    baseline = encoder.encode_target(**inputs)
+    changed_states = inputs['observation.state'].clone()
+    changed_states[:, -1, :] = 1.0
+    changed = encoder.encode_target(
+        **(inputs | {'observation.state': changed_states})
+    )
+
+    assert not torch.allclose(baseline[:, 0, :], changed[:, 0, :])
+
+
+def test_target_causal_mask_covers_task_and_full_state_sequence(monkeypatch):
+    encoder = _make_encoder(monkeypatch, target_causal=True)
+    encoder.encode_target(**_inputs(batch_size=1))
+
+    expected = torch.tril(torch.ones(4, 4, dtype=torch.bool))
+    attention_mask = encoder.shared_trunk.calls[-1]['attention_mask']
+    assert torch.equal(attention_mask[0, 0], expected)
+
+
+def test_lejepa2_registers_exactly_one_observation_encoder(monkeypatch):
     monkeypatch.setattr(
         ResNetModel,
         'from_pretrained',
@@ -198,7 +209,6 @@ def test_lejepa2_forward_uses_one_state_and_task_tokenizer(monkeypatch):
         action_dim=2,
         state_dim=2,
         encoder=common,
-        target_encoder=common | {'causal': False},
         predictor={
             **common,
             'hidden_size': 4,
@@ -210,7 +220,7 @@ def test_lejepa2_forward_uses_one_state_and_task_tokenizer(monkeypatch):
         horizon=horizon,
         sigreg={'weight': 0.0, 'knots': 5, 'num_proj': 8},
         target_update='grad',
-        target_trunk_eval=True,
+        target_causal=False,
     )
     model = Lejepa2(config)
     output = model(
@@ -226,17 +236,30 @@ def test_lejepa2_forward_uses_one_state_and_task_tokenizer(monkeypatch):
     assert output.encoder_hidden_states.ndim == 3
     assert output.abstract_pred.shape == (2, 3, 8)
     assert output.abstract_labels.shape == (2, 3, 8)
+    assert [module for module in model.modules() if isinstance(module, ObservationEncoder)] == [
+        model.encoder
+    ]
+    assert not hasattr(model, 'context_encoder')
+    assert not hasattr(model, 'target_encoder')
+    assert not hasattr(model.encoder, 'context_norm')
+    assert not hasattr(model.encoder, 'target_norm')
+    assert model.encoder.token_type_emb.num_embeddings == TokenType.NUM_TYPES == 3
+
     tokenizer_names = {
         name
         for name, _ in model.named_parameters()
         if name.endswith(('state_emb.weight', 'task_emb.weight'))
     }
     assert tokenizer_names == {
-        'context_encoder.state_emb.weight',
-        'context_encoder.task_emb.weight',
+        'encoder.state_emb.weight',
+        'encoder.task_emb.weight',
     }
 
     output.loss.backward()
-    assert model.context_encoder.state_emb.weight.grad is not None
-    assert model.context_encoder.task_emb.weight.grad is not None
-    assert model.context_encoder.shared_trunk.layers[0].self_attn.attention_interface.in_proj_weight.grad is not None
+    assert model.encoder.state_emb.weight.grad is not None
+    assert model.encoder.task_emb.weight.grad is not None
+    assert (
+        model.encoder.shared_trunk.layers[0]
+        .self_attn.attention_interface.in_proj_weight.grad
+        is not None
+    )

@@ -7,7 +7,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from einops import rearrange, repeat, pack
+from einops import rearrange, repeat
 
 from transformer_utils.original import DecoderLayer, EncoderLayer
 
@@ -22,24 +22,20 @@ class ActLejepa2Config(PretrainedConfig):
         action_dim: int = -1,
         state_dim: int = -1,
         encoder: dict = None,
-        target_encoder: dict = None,
         predictor: dict = None,
         decoder: dict = None,
         horizon: dict[str, int] = {},
         sigreg: dict = None,
         target_update: str = 'grad',
         use_token_type_embeddings: bool = True,
-        branch_norm: bool = True,
-        target_trunk_eval: bool | None = None,
+        target_causal: bool = False,
         **kwargs
     ):
         self.encoder = PretrainedConfig(**encoder)
-        self.target_encoder = PretrainedConfig(**target_encoder)
         self.predictor = PretrainedConfig(**predictor)
         self.decoder = PretrainedConfig(**decoder)
 
         self.encoder.state_dim = state_dim
-        self.target_encoder.state_dim = state_dim
         self.predictor.encoder_hidden_size = self.encoder.hidden_size
         self.decoder.action_dim = action_dim
         self.action_dim = action_dim
@@ -50,57 +46,32 @@ class ActLejepa2Config(PretrainedConfig):
         self.sigreg = PretrainedConfig(**(sigreg or {}))
         self.target_update = target_update
         self.use_token_type_embeddings = use_token_type_embeddings
-        self.branch_norm = branch_norm
-        if target_trunk_eval is None:
-            target_trunk_eval = getattr(self.target_encoder, 'attention_dropout', None) == 0.0
-        self.target_trunk_eval = target_trunk_eval
+        self.target_causal = target_causal
 
         if target_update != 'grad':
             raise ValueError(f"ActLejepa2Config requires target_update='grad', got {target_update!r}")
-        shared_trunk_fields = (
-            'hidden_size',
-            'intermediate_size',
-            'num_hidden_layers',
-            'num_attention_heads',
-            'hidden_act',
-        )
-        for field in shared_trunk_fields:
-            encoder_value = getattr(self.encoder, field)
-            target_value = getattr(self.target_encoder, field)
-            if encoder_value != target_value:
-                raise ValueError(
-                    f"ActLejepa2 requires encoder.{field} and target_encoder.{field} "
-                    f"to match for the shared trunk, got {encoder_value!r} and {target_value!r}"
-                )
-
-        encoder_dropout = self.encoder.attention_dropout
-        target_dropout = self.target_encoder.attention_dropout
-        expected_target_dropout = 0.0 if target_trunk_eval else encoder_dropout
-        if target_dropout != expected_target_dropout:
-            raise ValueError(
-                "target_encoder.attention_dropout must be 0.0 when target_trunk_eval=true, "
-                "or match encoder.attention_dropout when target_trunk_eval=false; "
-                f"got {target_dropout!r}"
-            )
 
 
 class TokenType:
     TASK = 0
-    CONTEXT_STATE = 1
+    STATE = 1
     IMAGE = 2
-    TARGET_STATE = 3
-    NUM_TYPES = 4
+    NUM_TYPES = 3
 
 
-class ContextEncoder(nn.Module):
+class ObservationEncoder(nn.Module):
+    """One encoder used for both context observations and target states."""
+
     def __init__(
         self,
         config: PretrainedConfig,
+        horizon: dict[str, int],
         use_token_type_embeddings: bool = True,
-        branch_norm: bool = True,
+        target_causal: bool = False,
     ):
         super().__init__()
         self.config = config
+        self.target_causal = target_causal
         self.state_emb = nn.Linear(config.state_dim, config.hidden_size)
         self.img_emb = ResNetModel.from_pretrained('microsoft/resnet-18')
         n_feature_maps = self.img_emb.config.hidden_sizes[-1]
@@ -113,19 +84,28 @@ class ContextEncoder(nn.Module):
             if use_token_type_embeddings
             else None
         )
-        self.context_norm = nn.LayerNorm(config.hidden_size) if branch_norm else nn.Identity()
+
+        T = horizon['observation.state']
+        self.register_buffer(
+            'state_pos_emb',
+            get_1d_sincos_pos_emb(T, config.hidden_size),
+            persistent=False,
+        )
 
     def forward(self, **inputs: dict):
-        task_token = self._get_task_token(inputs['task_index'])
-        state_token = self._get_state_token(inputs['observation.state'])
+        return self.encode_context(**inputs)
+
+    def encode_context(self, **inputs: dict):
+        task_token = self._get_task_token(inputs['task_index']).unsqueeze(1)
+        state_tokens = self._get_state_tokens(inputs['observation.state'], context_only=True)
         img_tokens = self._get_img_tokens(inputs[self._get_img_key(**inputs)])
 
-        hidden_states, _ = pack([task_token, state_token, img_tokens], 'b * c')
+        hidden_states = torch.cat([task_token, state_tokens, img_tokens], dim=1)
         B = hidden_states.shape[0]
         type_ids = torch.cat(
             [
                 torch.full((B, 1), TokenType.TASK, device=hidden_states.device),
-                torch.full((B, 1), TokenType.CONTEXT_STATE, device=hidden_states.device),
+                torch.full((B, 1), TokenType.STATE, device=hidden_states.device),
                 torch.full((B, img_tokens.shape[1]), TokenType.IMAGE, device=hidden_states.device),
             ],
             dim=1,
@@ -134,8 +114,32 @@ class ContextEncoder(nn.Module):
             hidden_states,
             type_ids.to(dtype=torch.long),
         )
-        hidden_states = self.shared_trunk(hidden_states)
-        return self.context_norm(hidden_states)
+        return self.shared_trunk(hidden_states)
+
+    def encode_target(self, **inputs: dict):
+        states = inputs['observation.state']
+        state_tokens = self._get_state_tokens(states)
+        B, T, _ = state_tokens.shape
+        task_token = self._get_task_token(inputs['task_index']).unsqueeze(1)
+
+        # The input layout and mask differ from the context call, but tokenization,
+        # token roles, transformer layers, normalization, dropout, and parameters
+        # are exactly the same encoder invocation.
+        hidden_states = torch.cat([task_token, state_tokens], dim=1)
+        type_ids = torch.full(
+            (B, T + 1),
+            TokenType.STATE,
+            dtype=torch.long,
+            device=hidden_states.device,
+        )
+        type_ids[:, 0] = TokenType.TASK
+
+        hidden_states = self.add_token_type_embeddings(hidden_states, type_ids)
+        hidden_states = self.shared_trunk(
+            hidden_states,
+            self.get_target_attention_mask(B, T, **inputs),
+        )
+        return hidden_states[:, 1:, :]
 
     def add_token_type_embeddings(self, hidden_states, type_ids):
         if self.token_type_emb is None:
@@ -148,15 +152,37 @@ class ContextEncoder(nn.Module):
             task_index = task_index.squeeze(-1)
         return self.task_emb(task_index)
 
-    def _get_state_token(self, states: torch.Tensor):
-        state_token = states[:, 0, :] if states.ndim == 3 else states
-        assert state_token.ndim == 2
-        return self.state_emb(state_token)
+    def _get_state_tokens(self, states: torch.Tensor, context_only: bool = False):
+        if states.ndim == 2:
+            states = states.unsqueeze(1)
+        if states.ndim != 3:
+            raise ValueError(
+                f"ObservationEncoder expects states shaped (B, T, C), got {tuple(states.shape)}"
+            )
+        if context_only:
+            if states.shape[1] == 0:
+                raise ValueError("ObservationEncoder requires at least one context state")
+            states = states[:, :1, :]
+
+        T = states.shape[1]
+        if T > self.state_pos_emb.shape[0]:
+            raise ValueError(
+                f"ObservationEncoder received {T} states, but its configured horizon is "
+                f"{self.state_pos_emb.shape[0]}"
+            )
+
+        state_tokens = self.state_emb(states)
+        return state_tokens + self.state_pos_emb[:T].to(
+            device=state_tokens.device,
+            dtype=state_tokens.dtype,
+        )
 
     def _get_img_tokens(self, imgs: torch.Tensor):
         if imgs.ndim == 5:
             if imgs.shape[1] != 1:
-                raise ValueError(f"ContextEncoder expects one context image, got shape {tuple(imgs.shape)}")
+                raise ValueError(
+                    f"ObservationEncoder expects one context image, got shape {tuple(imgs.shape)}"
+                )
             imgs = imgs[:, 0]
 
         x = self.img_emb(pixel_values=imgs).last_hidden_state
@@ -172,75 +198,7 @@ class ContextEncoder(nn.Module):
         self._img_key = x
         return x
 
-
-class TargetEncoder(nn.Module):
-    """Build and encode a target-state sequence with shared observation weights."""
-
-    def __init__(self, config: PretrainedConfig, branch_norm: bool = True):
-        super().__init__()
-        self.config = config
-        self.target_norm = nn.LayerNorm(config.hidden_size) if branch_norm else nn.Identity()
-
-        T = config.horizon['observation.state']
-        self.register_buffer(
-            'state_pos_emb',
-            get_1d_sincos_pos_emb(T, config.hidden_size),
-            persistent=False,
-        )
-
-    def forward(
-        self,
-        context_encoder: ContextEncoder,
-        target_trunk_eval: bool = True,
-        **inputs: dict,
-    ):
-        states = inputs['observation.state']
-        if states.ndim == 2:
-            states = states.unsqueeze(1)
-        if states.ndim != 3:
-            raise ValueError(f"TargetEncoder expects states shaped (B, T, C), got {tuple(states.shape)}")
-
-        B, T, _ = states.shape
-        if T > self.state_pos_emb.shape[0]:
-            raise ValueError(
-                f"TargetEncoder received {T} states, but its configured horizon is "
-                f"{self.state_pos_emb.shape[0]}"
-            )
-        # Context and target observations must use the same tokenizer.  The
-        # target branch only defines a different sequence layout, token role,
-        # attention mask, and optional branch normalization.
-        task_token = context_encoder._get_task_token(inputs['task_index']).unsqueeze(1)
-        state_tokens = context_encoder.state_emb(states)
-        state_tokens = state_tokens + self.state_pos_emb[:T].to(
-            device=state_tokens.device,
-            dtype=state_tokens.dtype,
-        )
-
-        # Preserve the target trajectory as one sequence so every target
-        # state can attend to the other target states, matching ACT-JEPA's
-        # target semantics while sharing the encoder trunk.
-        hidden_states = torch.cat([task_token, state_tokens], dim=1)
-        type_ids = torch.full(
-            (B, T + 1),
-            TokenType.TARGET_STATE,
-            dtype=torch.long,
-            device=hidden_states.device,
-        )
-        type_ids[:, 0] = TokenType.TASK
-
-        attention_mask = self.get_attention_mask(B, T, **inputs)
-        hidden_states = context_encoder.add_token_type_embeddings(hidden_states, type_ids)
-        hidden_states = self._run_shared_trunk(
-            context_encoder.shared_trunk,
-            hidden_states,
-            attention_mask,
-            target_trunk_eval,
-        )
-        hidden_states = self.target_norm(hidden_states)
-
-        return hidden_states[:, 1:, :]
-
-    def get_attention_mask(self, B: int, T: int, **inputs):
+    def get_target_attention_mask(self, B: int, T: int, **inputs):
         pad_mask = inputs.get('observation.state_is_pad')
         if pad_mask is None:
             pad_mask = torch.zeros(
@@ -257,7 +215,7 @@ class TargetEncoder(nn.Module):
                 pad_mask = pad_mask.squeeze(-1)
             if pad_mask.ndim != 2 or pad_mask.shape[0] != B or pad_mask.shape[1] < T:
                 raise ValueError(
-                    f"TargetEncoder expected a state padding mask compatible with "
+                    f"ObservationEncoder expected a state padding mask compatible with "
                     f"(B, T)=({B}, {T}), got {tuple(pad_mask.shape)}"
                 )
             pad_mask = pad_mask[:, :T]
@@ -272,7 +230,7 @@ class TargetEncoder(nn.Module):
             nh=nh,
             Tq=T + 1,
         )
-        if self.config.causal:
+        if self.target_causal:
             causal_mask = torch.tril(
                 torch.ones(
                     (T + 1, T + 1),
@@ -282,23 +240,6 @@ class TargetEncoder(nn.Module):
             )
             attention_mask = attention_mask & causal_mask
         return attention_mask
-
-    def _run_shared_trunk(
-        self,
-        shared_trunk: nn.Module,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None,
-        target_trunk_eval: bool,
-    ):
-        if not (self.training and target_trunk_eval):
-            return shared_trunk(hidden_states, attention_mask)
-
-        was_training = shared_trunk.training
-        shared_trunk.eval()
-        try:
-            return shared_trunk(hidden_states, attention_mask)
-        finally:
-            shared_trunk.train(was_training)
 
 
 class SharedEncoderTrunk(nn.Module):
@@ -440,8 +381,8 @@ class SIGReg(torch.nn.Module):
 
 class Lejepa2(PreTrainedModel):
     '''
-    ACT-LEJEPA variant with shared observation tokenizers and transformer
-    trunk, plus branch-specific sequence layouts and output normalization.
+    ACT-LEJEPA variant that invokes one observation encoder for both the
+    context and target sequence layouts.
     '''
     config_class = ActLejepa2Config
     main_input_name = 'observation.state'
@@ -451,14 +392,11 @@ class Lejepa2(PreTrainedModel):
 
     def __init__(self, config: ActLejepa2Config):
         super().__init__(config)
-        self.context_encoder = ContextEncoder(
+        self.encoder = ObservationEncoder(
             config.encoder,
+            horizon=config.horizon,
             use_token_type_embeddings=config.use_token_type_embeddings,
-            branch_norm=config.branch_norm,
-        )
-        self.target_encoder = TargetEncoder(
-            config.target_encoder,
-            branch_norm=config.branch_norm,
+            target_causal=config.target_causal,
         )
 
         self.predictor = Predictor(config.predictor)
@@ -515,14 +453,10 @@ class Lejepa2(PreTrainedModel):
         return ModelOutput(output)
 
     def encode_context(self, **inputs):
-        return self.context_encoder(**inputs)
+        return self.encoder.encode_context(**inputs)
 
     def encode_target(self, **inputs):
-        return self.target_encoder(
-            self.context_encoder,
-            target_trunk_eval=self.config.target_trunk_eval,
-            **inputs,
-        )
+        return self.encoder.encode_target(**inputs)
 
     def abstract_loss_function(self, abstract_pred, abstract_labels, **kwargs):
         is_pad = kwargs['observation.state_is_pad']
@@ -555,13 +489,6 @@ class Lejepa2(PreTrainedModel):
 
     def loss_function(self, abstract_loss, weighted_sigreg_loss):
         return abstract_loss + weighted_sigreg_loss
-
-    @torch.no_grad()
-    def copy_context_to_target_encoder(self):
-        # Kept for compatibility with policy/callback interfaces.  Target and
-        # context already reference the same tokenizer and transformer trunk,
-        # so there are no parameters to copy.
-        return None
 
 
 class ActLejepa2Model(PreTrainedModel):
@@ -623,13 +550,10 @@ class ActLejepa2Model(PreTrainedModel):
     def loss_function(self, reconstruction_loss, jepa_loss):
         return reconstruction_loss + jepa_loss
 
-    @torch.no_grad()
-    def copy_context_to_target_encoder(self):
-        return self.jepa.copy_context_to_target_encoder()
-
     @property
     def encoder(self):
-        return self.jepa.context_encoder
+        return self.jepa.encoder
+
 
 def get_1d_sincos_pos_emb(seq_len, hidden_size):
     '''Returns a [seq_len, hidden_size] tensor of sinusoidal positional embeddings.
