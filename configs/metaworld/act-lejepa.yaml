@@ -4,7 +4,7 @@ app: act-lejepa metaworld
 training_arguments:
   # seed
   seed: 42
-  max_steps: 4000
+  max_steps: 6000
 
   # optimization
   optim: adamw_torch

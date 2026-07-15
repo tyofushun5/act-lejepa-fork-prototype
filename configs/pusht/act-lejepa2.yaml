@@ -4,7 +4,7 @@ app: act-lejepa2 pusht
 training_arguments:
   # seed
   seed: 42
-  max_steps: 4000
+  max_steps: 6000
 
   # optimization
   optim: adamw_torch
@@ -81,7 +81,7 @@ model:
     causal: false
 
   sigreg:
-    weight: 0.03
+    weight: 0.01
     knots: 17
     num_proj: 1024
 
