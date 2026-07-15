@@ -174,11 +174,11 @@ class ContextEncoder(nn.Module):
 
 
 class TargetEncoder(nn.Module):
+    """Build and encode a target-state sequence with shared observation weights."""
+
     def __init__(self, config: PretrainedConfig, branch_norm: bool = True):
         super().__init__()
         self.config = config
-        self.state_emb = nn.Linear(config.state_dim, config.hidden_size)
-        self.task_emb = nn.Embedding(50, config.hidden_size)
         self.target_norm = nn.LayerNorm(config.hidden_size) if branch_norm else nn.Identity()
 
         T = config.horizon['observation.state']
@@ -206,25 +206,27 @@ class TargetEncoder(nn.Module):
                 f"TargetEncoder received {T} states, but its configured horizon is "
                 f"{self.state_pos_emb.shape[0]}"
             )
-        task_token = self._get_task_token(inputs['task_index'])
-        task_tokens = repeat(task_token, 'b c -> b t c', t=T)
-
-        state_tokens = self.state_emb(states)
+        # Context and target observations must use the same tokenizer.  The
+        # target branch only defines a different sequence layout, token role,
+        # attention mask, and optional branch normalization.
+        task_token = context_encoder._get_task_token(inputs['task_index']).unsqueeze(1)
+        state_tokens = context_encoder.state_emb(states)
         state_tokens = state_tokens + self.state_pos_emb[:T].to(
             device=state_tokens.device,
             dtype=state_tokens.dtype,
         )
 
-        task_tokens = rearrange(task_tokens, 'b t c -> (b t) c')
-        state_tokens = rearrange(state_tokens, 'b t c -> (b t) c')
-        hidden_states = torch.stack([task_tokens, state_tokens], dim=1)
-
-        type_ids = torch.tensor(
-            [TokenType.TASK, TokenType.TARGET_STATE],
+        # Preserve the target trajectory as one sequence so every target
+        # state can attend to the other target states, matching ACT-JEPA's
+        # target semantics while sharing the encoder trunk.
+        hidden_states = torch.cat([task_token, state_tokens], dim=1)
+        type_ids = torch.full(
+            (B, T + 1),
+            TokenType.TARGET_STATE,
             dtype=torch.long,
             device=hidden_states.device,
         )
-        type_ids = repeat(type_ids, 's -> n s', n=B * T)
+        type_ids[:, 0] = TokenType.TASK
 
         attention_mask = self.get_attention_mask(B, T, **inputs)
         hidden_states = context_encoder.add_token_type_embeddings(hidden_states, type_ids)
@@ -236,34 +238,47 @@ class TargetEncoder(nn.Module):
         )
         hidden_states = self.target_norm(hidden_states)
 
-        state_tokens = hidden_states[:, 1, :]
-        return rearrange(state_tokens, '(b t) c -> b t c', b=B, t=T)
-
-    def _get_task_token(self, task_index: torch.Tensor):
-        task_index = task_index.to(dtype=torch.long)
-        if task_index.ndim > 1:
-            task_index = task_index.squeeze(-1)
-        return self.task_emb(task_index)
+        return hidden_states[:, 1:, :]
 
     def get_attention_mask(self, B: int, T: int, **inputs):
         pad_mask = inputs.get('observation.state_is_pad')
         if pad_mask is None:
-            pad_mask = torch.zeros((B * T,), dtype=torch.bool, device=self.state_pos_emb.device)
+            pad_mask = torch.zeros(
+                (B, T),
+                dtype=torch.bool,
+                device=inputs['observation.state'].device,
+            )
         else:
-            pad_mask = pad_mask.to(dtype=torch.bool)
+            pad_mask = pad_mask.to(
+                device=inputs['observation.state'].device,
+                dtype=torch.bool,
+            )
             if pad_mask.ndim > 2:
                 pad_mask = pad_mask.squeeze(-1)
-            pad_mask = pad_mask[:, :T].reshape(B * T)
+            if pad_mask.ndim != 2 or pad_mask.shape[0] != B or pad_mask.shape[1] < T:
+                raise ValueError(
+                    f"TargetEncoder expected a state padding mask compatible with "
+                    f"(B, T)=({B}, {T}), got {tuple(pad_mask.shape)}"
+                )
+            pad_mask = pad_mask[:, :T]
 
-        task_is_visible = torch.ones_like(pad_mask, dtype=torch.bool)
-        state_is_visible = ~pad_mask
-        attention_mask = torch.stack([task_is_visible, state_is_visible], dim=1)
+        task_is_visible = torch.ones((B, 1), dtype=torch.bool, device=pad_mask.device)
+        visible_tokens = torch.cat([task_is_visible, ~pad_mask], dim=1)
 
         nh = self.config.num_attention_heads
-        attention_mask = repeat(attention_mask, 'B Tk -> B nh Tq Tk', nh=nh, Tq=2)
+        attention_mask = repeat(
+            visible_tokens,
+            'B Tk -> B nh Tq Tk',
+            nh=nh,
+            Tq=T + 1,
+        )
         if self.config.causal:
             causal_mask = torch.tril(
-                torch.ones((2, 2), dtype=torch.bool, device=attention_mask.device)
+                torch.ones(
+                    (T + 1, T + 1),
+                    dtype=torch.bool,
+                    device=attention_mask.device,
+                )
             )
             attention_mask = attention_mask & causal_mask
         return attention_mask
@@ -425,8 +440,8 @@ class SIGReg(torch.nn.Module):
 
 class Lejepa2(PreTrainedModel):
     '''
-    ACT-LEJEPA variant with modality-specific tokenizers and one shared
-    transformer encoder trunk for context and target latents.
+    ACT-LEJEPA variant with shared observation tokenizers and transformer
+    trunk, plus branch-specific sequence layouts and output normalization.
     '''
     config_class = ActLejepa2Config
     main_input_name = 'observation.state'
@@ -445,8 +460,6 @@ class Lejepa2(PreTrainedModel):
             config.target_encoder,
             branch_norm=config.branch_norm,
         )
-
-        self._copy_shared_tokenizer_weights()
 
         self.predictor = Predictor(config.predictor)
         self.sigreg_loss_weight = getattr(config.sigreg, 'weight', 0.0)
@@ -545,12 +558,10 @@ class Lejepa2(PreTrainedModel):
 
     @torch.no_grad()
     def copy_context_to_target_encoder(self):
-        self._copy_shared_tokenizer_weights()
-
-    @torch.no_grad()
-    def _copy_shared_tokenizer_weights(self):
-        self.target_encoder.state_emb.load_state_dict(self.context_encoder.state_emb.state_dict())
-        self.target_encoder.task_emb.load_state_dict(self.context_encoder.task_emb.state_dict())
+        # Kept for compatibility with policy/callback interfaces.  Target and
+        # context already reference the same tokenizer and transformer trunk,
+        # so there are no parameters to copy.
+        return None
 
 
 class ActLejepa2Model(PreTrainedModel):
