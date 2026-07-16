@@ -330,7 +330,7 @@ class Lejepa(PreTrainedModel):
         return self.sigreg(encoder_hidden_states, batch_first=True)
 
     def sigreg_loss_function(self, target_sigreg_loss, context_sigreg_loss):
-        return target_sigreg_loss + context_sigreg_loss
+        return context_sigreg_loss
 
     def weighted_sigreg_loss_function(self, sigreg_loss):
         return self.sigreg_loss_weight * sigreg_loss
